@@ -6,8 +6,12 @@ name: Go
 on:
   push:
     branches: [ "master" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "master" ]
+
+permissions:
+  contents: write
 
 jobs:
 
@@ -38,3 +42,14 @@ jobs:
       with:
         name: prereviewcal-windows-amd64
         path: dist/prereviewcal.exe
+
+    - name: Publish GitHub Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create "${GITHUB_REF_NAME}" \
+          dist/prereviewcal.exe \
+          .prereviewcal.json \
+          --title "${GITHUB_REF_NAME}" \
+          --generate-notes
