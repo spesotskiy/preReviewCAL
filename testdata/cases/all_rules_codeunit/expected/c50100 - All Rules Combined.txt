@@ -1,0 +1,69 @@
+OBJECT Codeunit 50100 All Rules Combined
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+    OnRun=VAR
+            RunDateL@1001 : Date;
+          BEGIN
+            // CAL001, CAL010, CAL020, CAL032, CAL033
+            RunDateL := TODAY();
+            ProcessEntries('ITEM-01', RunDateL);
+          END;
+  }
+  CODE
+  {
+    VAR
+      UsedGlobal@1001 : Integer;
+      ConfirmMsg@1002 : TextConst 'ENU=Proceed with %1?;RUS=Продолжить для %1?';
+
+    PROCEDURE ProcessEntries@1(ItemNoP@1000 : Code[20];PostingDateP@1001 : Date;UnusedParamP@1002 : Boolean) Result : Decimal;
+    VAR
+      ItemLedgEntryL@1003 : Record 32;
+      TotalQtyL@1006 : Decimal;
+    BEGIN
+      // CAL001, CAL002, CAL003, CAL004, CAL005, CAL010, CAL011, CAL012
+      // CAL020, CAL021, CAL030, CAL031, CAL032, CAL033, CAL034
+      UsedGlobal := 1;
+
+      IF ItemNoP = '' THEN
+        EXIT;
+
+      ItemLedgEntryL.SETRANGE("Item No.", ItemNoP);
+      ItemLedgEntryL.SETRANGE("Posting Date", PostingDateP);
+      IF ItemLedgEntryL.FINDSET() THEN BEGIN
+        REPEAT
+          TotalQtyL := TotalQtyL + ItemLedgEntryL.Quantity;
+        UNTIL ItemLedgEntryL.NEXT() = 0;
+      END;
+
+      IF (TotalQtyL > 0) AND
+         (UsedGlobal > 0) THEN
+      BEGIN
+        IF CONFIRM(ConfirmMsg, FALSE, COMPANYNAME()) THEN
+          Result := TotalQtyL;
+      END;
+    END;
+
+    [EventSubscriber(Codeunit,80,OnAfterPostSalesDoc,'',false,false)]
+    LOCAL PROCEDURE OnAfterPost@2(VAR SalesHeader@1000 : Record 36);
+    BEGIN
+      // CAL011: EventSubscriber warns only; CAL020: TESTFIELD has arg, FINDSET gets ()
+      IF SalesHeader.FINDSET() THEN
+        MESSAGE('%1', SalesHeader."No.");
+    END;
+
+    BEGIN
+    {
+      Documentation must never be modified by rules:
+      if a=b then begin end;
+    }
+    END.
+  }
+}

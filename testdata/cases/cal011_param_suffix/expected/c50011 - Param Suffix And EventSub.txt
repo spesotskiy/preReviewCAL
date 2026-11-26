@@ -1,0 +1,31 @@
+OBJECT Codeunit 50011 Param Suffix And EventSub
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    PROCEDURE UpdateDoc@1(DocNoP@1000 : Code[20];QtyP@1001 : Decimal);
+    BEGIN
+      // CAL011: DocNo -> DocNoP; QtyP already has P suffix
+      MESSAGE('%1 %2', DocNoP, QtyP);
+    END;
+
+    [EventSubscriber(Codeunit,80,OnBeforePostSalesDoc,'',false,false)]
+    LOCAL PROCEDURE HandleBeforePost@2(VAR SalesHeader@1000 : Record 36);
+    BEGIN
+      // CAL011: EventSubscriber parameter SalesHeader must warn only, NOT be renamed
+      SalesHeader.TESTFIELD("No.");
+    END;
+
+    BEGIN
+    END.
+  }
+}

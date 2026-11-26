@@ -1,0 +1,24 @@
+OBJECT Codeunit 50003 Unused Param
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    PROCEDURE Calculate@1(AmountP@1000 : Decimal;UnusedParamP@1001 : Integer) Result : Decimal;
+    BEGIN
+      // CAL003: UnusedParamP must produce a warning without altering signature
+      Result := AmountP * 2;
+    END;
+
+    BEGIN
+    END.
+  }
+}

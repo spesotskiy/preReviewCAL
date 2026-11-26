@@ -1,0 +1,33 @@
+OBJECT Codeunit 50004 Local TextConst
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    VAR
+      ExistingGlobal@1000 : Integer;
+
+    PROCEDURE ShowMessage@1();
+    VAR
+      ConfirmMsg@1000 : TextConst 'ENU=Are you sure?;RUS=Вы уверены?';
+      CountL@1001 : Integer;
+    BEGIN
+      // CAL004: ConfirmMsg must be promoted to global VAR
+      ExistingGlobal := 1;
+      CountL := ExistingGlobal;
+      IF CONFIRM(ConfirmMsg) THEN
+        MESSAGE('%1', CountL);
+    END;
+
+    BEGIN
+    END.
+  }
+}

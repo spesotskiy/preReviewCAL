@@ -1,0 +1,32 @@
+OBJECT Codeunit 50010 Local Suffix
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    PROCEDURE ComputeTotal@1(FactorP@1000 : Decimal) Result : Decimal;
+    VAR
+      CounterL@1001 : Integer;
+      AlreadyHasL@1002 : Decimal;
+      VeryLongLocalVariableName30Chr@1003 : Integer;
+    BEGIN
+      // CAL010: Counter -> CounterL; AlreadyHasL stays; Result (return var) stays without L
+      // CAL010: VeryLongLocalVariableName30Chr exceeds 30 chars with 'L' -> warning only, not renamed
+      CounterL := 10;
+      AlreadyHasL := CounterL * FactorP;
+      VeryLongLocalVariableName30Chr := CounterL;
+      Result := AlreadyHasL + VeryLongLocalVariableName30Chr;
+    END;
+
+    BEGIN
+    END.
+  }
+}

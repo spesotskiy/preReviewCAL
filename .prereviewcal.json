@@ -1,0 +1,38 @@
+{
+  "encoding": "utf-8-nobom",
+  "lineEnding": "preserve",
+  "fileNaming": {
+    "template": "{prefix}{id} - {name}.txt",
+    "typePrefixes": {
+      "Table": "t",
+      "Page": "p",
+      "Report": "r",
+      "Codeunit": "c",
+      "XMLport": "x",
+      "Query": "q",
+      "MenuSuite": "m",
+      "Form": "f",
+      "Dataport": "d"
+    }
+  },
+  "diff": {
+    "maxOldFunctionLines": 50
+  },
+  "rules": {
+    "CAL001": { "enabled": true },
+    "CAL002": { "enabled": true },
+    "CAL003": { "enabled": true },
+    "CAL004": { "enabled": true },
+    "CAL005": { "enabled": true },
+    "CAL010": { "enabled": true, "suffix": "L" },
+    "CAL011": { "enabled": true, "suffix": "P" },
+    "CAL012": { "enabled": true },
+    "CAL020": { "enabled": true },
+    "CAL021": { "enabled": true },
+    "CAL030": { "enabled": true, "indentSize": 2 },
+    "CAL031": { "enabled": true },
+    "CAL032": { "enabled": true },
+    "CAL033": { "enabled": true },
+    "CAL034": { "enabled": true }
+  }
+}

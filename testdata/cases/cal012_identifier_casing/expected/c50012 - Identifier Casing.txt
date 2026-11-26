@@ -1,0 +1,37 @@
+OBJECT Codeunit 50012 Identifier Casing
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    VAR
+      GlobalCounter@1000 : Integer;
+
+    PROCEDURE RunTask@1(InputValueP@1000 : Integer);
+    VAR
+      ItemLedgEntryL@1001 : Record 32;
+    BEGIN
+      // CAL012: variable and procedure references must match declaration casing
+      GlobalCounter := InputValueP;
+      ItemLedgEntryL.SETRANGE("Entry No.", GlobalCounter);
+      IF ItemLedgEntryL.FINDFIRST() THEN
+        HelperProc();
+    END;
+
+    LOCAL PROCEDURE HelperProc@2();
+    BEGIN
+      MESSAGE('%1', GlobalCounter);
+    END;
+
+    BEGIN
+    END.
+  }
+}

@@ -1,0 +1,40 @@
+OBJECT Codeunit 50005 No With
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    PROCEDURE ProcessEntries@1(ItemNoP@1000 : Code[20]);
+    VAR
+      ItemLedgEntryL@1001 : Record 32;
+      TotalQtyL@1002 : Decimal;
+    BEGIN
+      // CAL005: WITH must be removed and fields/methods qualified with ItemLedgEntryL.
+      WITH ItemLedgEntryL DO BEGIN
+        SETRANGE("Item No.", ItemNoP);
+        SETRANGE(Open, TRUE);
+        IF FINDSET() THEN
+          REPEAT
+            TotalQtyL += Quantity;
+          UNTIL NEXT() = 0;
+      END;
+
+      // CAL005: single-statement WITH
+      WITH ItemLedgEntryL DO
+        TotalQtyL += "Remaining Quantity";
+
+      MESSAGE('%1', TotalQtyL);
+    END;
+
+    BEGIN
+    END.
+  }
+}

@@ -1,0 +1,38 @@
+OBJECT Codeunit 50001 Unused Local Var
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+    OnRun=VAR
+            UnusedTrigVarL@1000 : Integer;
+          BEGIN
+            // CAL001: UnusedTrigVarL must be removed along with empty VAR section
+            RunCheck();
+          END;
+  }
+  CODE
+  {
+    PROCEDURE RunCheck@1();
+    VAR
+      UsedVarL@1000 : Integer;
+      UnusedVarL@1001 : Text[50];
+      UnusedLocalTxt@1002 : TextConst 'ENU=Never used';
+    BEGIN
+      // CAL001: UnusedVarL and UnusedLocalTxt are unused and must be removed
+      UsedVarL := 42;
+      MESSAGE('%1', UsedVarL);
+    END;
+
+    BEGIN
+    {
+      Documentation block stays untouched.
+    }
+    END.
+  }
+}

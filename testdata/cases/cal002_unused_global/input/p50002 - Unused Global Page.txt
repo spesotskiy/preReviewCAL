@@ -1,0 +1,44 @@
+OBJECT Page 50002 Unused Global Page
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+    SourceTable=Table32;
+    OnOpenPage=BEGIN
+                 UsedInTriggerGlobal := 1;
+               END;
+  }
+  CONTROLS
+  {
+    { 1   ;0   ;Container ;
+                ContainerType=ContentArea }
+
+    { 2   ;1   ;Field     ;
+                SourceExpr=UsedInSourceExprGlobal;
+                Visible=UsedInVisibleGlobal }
+  }
+  CODE
+  {
+    VAR
+      UsedInTriggerGlobal@1000 : Integer;
+      UsedInSourceExprGlobal@1001 : Text[50];
+      UsedInVisibleGlobal@1002 : Boolean INDATASET;
+      UnusedGlobal@1003 : Decimal;
+      UnusedGlobal2@1004 : Code[20];
+
+    LOCAL PROCEDURE Helper@1();
+    BEGIN
+      // CAL002: UnusedGlobal and UnusedGlobal2 must be removed, page-bound globals kept
+      MESSAGE('%1', UsedInTriggerGlobal);
+    END;
+
+    BEGIN
+    END.
+  }
+}

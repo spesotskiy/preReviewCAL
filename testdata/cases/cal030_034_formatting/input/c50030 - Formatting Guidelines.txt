@@ -1,0 +1,44 @@
+OBJECT Codeunit 50030 Formatting Guidelines
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    local procedure FormatDemo@1(QtyP@1000 : Decimal;PriceP@1001 : Decimal);
+    var
+        TotalL@1002 : Decimal;
+        IdxL@1003 : Integer;
+    begin
+      // CAL030, CAL031, CAL032, CAL033, CAL034: indentation, BEGIN, spacing, keywords, semicolons/blanks
+      TotalL:=QtyP*PriceP;;
+
+
+      // CAL031: single-line IF puts BEGIN on the same line
+      if TotalL>0 then
+      begin
+          TotalL:=TotalL+1;
+      end;
+
+      // CAL031: multi-line IF puts BEGIN on the next line directly under IF
+      if (QtyP>0) and
+         (PriceP>0) then begin
+        TotalL:=TotalL+PriceP;
+      end;
+
+      // CAL032: unary minus must not get extra space; commas/parens spaced properly
+      IdxL := -1;
+      MESSAGE( '%1, %2' ,TotalL ,IdxL );
+    end;
+
+    BEGIN
+    END.
+  }
+}

@@ -1,0 +1,41 @@
+OBJECT Table 50101 Custom Entry
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+    OnInsert=BEGIN
+               // CAL001, CAL020, CAL032, CAL033
+               "Posting Date" := TODAY();
+             END;
+  }
+  FIELDS
+  {
+    { 1   ;   ;Entry No.           ;Integer        }
+    { 2   ;   ;Item No.            ;Code20         ;OnValidate=VAR
+                                                                 ItemLedgL@1000 : Record 32;
+                                                               BEGIN
+                                                                 // CAL005, CAL010, CAL020, CAL030, CAL032, CAL033
+                                                                 ItemLedgL.SETRANGE("Item No.", Rec."Item No.");
+                                                                 IF ItemLedgL.FINDFIRST() THEN
+                                                                   Rec.Quantity := ItemLedgL.Quantity;
+                                                               END;
+                                                    CaptionML=ENU=Item No. }
+    { 3   ;   ;Posting Date        ;Date           }
+    { 4   ;   ;Quantity            ;Decimal        }
+  }
+  KEYS
+  {
+    {    ;Entry No.                               ;Clustered=Yes }
+  }
+  CODE
+  {
+    BEGIN
+    END.
+  }
+}

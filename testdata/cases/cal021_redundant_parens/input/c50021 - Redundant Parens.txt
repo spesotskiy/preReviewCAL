@@ -1,0 +1,35 @@
+OBJECT Codeunit 50021 Redundant Parens
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    PROCEDURE CheckExpr@1(FlagP@1000 : Boolean;QtyP@1001 : Decimal) Result : Boolean;
+    VAR
+      TotalL@1002 : Decimal;
+    BEGIN
+      // CAL021: redundant outer and atomic parens removed
+      IF (FlagP) THEN
+        TotalL := (QtyP) + (1);
+
+      // CAL021: duplicate parens removed, required AND comparison parens MUST remain!
+      IF ((QtyP > 0) AND (TotalL > 0)) THEN
+        Result := TRUE;
+
+      // CAL021: NOT (comparison) parens MUST remain!
+      IF NOT (QtyP = 0) THEN
+        EXIT((Result));
+    END;
+
+    BEGIN
+    END.
+  }
+}

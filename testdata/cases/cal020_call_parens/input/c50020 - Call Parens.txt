@@ -1,0 +1,44 @@
+OBJECT Codeunit 50020 Call Parens
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    PROCEDURE RunCalls@1();
+    VAR
+      ItemLedgEntryL@1000 : Record 32;
+      WorkDateL@1001 : Date;
+      CompanyL@1002 : Text[50];
+    BEGIN
+      // CAL020: zero-arg calls including TODAY() and COMPANYNAME() get ()
+      WorkDateL := TODAY;
+      CompanyL := COMPANYNAME;
+      DoInternal;
+      ItemLedgEntryL.RESET;
+      IF ItemLedgEntryL.ISEMPTY THEN
+        // CAL020: EXIT must NOT have empty parens
+        EXIT();
+      IF ItemLedgEntryL.FINDSET THEN
+        REPEAT
+          MESSAGE('%1 %2', WorkDateL, CompanyL);
+        UNTIL ItemLedgEntryL.NEXT = 0;
+    END;
+
+    LOCAL PROCEDURE DoInternal@2() Result : Boolean;
+    BEGIN
+      // CAL020: EXIT with return value keeps parens
+      EXIT(TRUE);
+    END;
+
+    BEGIN
+    END.
+  }
+}

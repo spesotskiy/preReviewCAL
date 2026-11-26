@@ -1,0 +1,55 @@
+OBJECT Report 50102 Custom Report
+{
+  OBJECT-PROPERTIES
+  {
+    Date=21.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+    OnPreReport=BEGIN
+                  // CAL012, CAL020, CAL032, CAL033
+                  CompanyLabel := COMPANYNAME();
+                END;
+  }
+  DATASET
+  {
+    { 1000;    ;ItemLedgerEntry     ;DataItem;DataItemTable=Table32;
+                                              OnAfterGetRecord=VAR
+                                                                 FactorL@1000 : Decimal;
+                                                               BEGIN
+                                                                 // CAL010, CAL032
+                                                                 FactorL := 2;
+                                                                 TotalQty := TotalQty + ItemLedgerEntry.Quantity * FactorL;
+                                                               END;
+                                                                }
+    { 1001;1   ;CompanyLabelCol     ;Column  ;CompanyLabel }
+    { 1002;1   ;TotalQtyCol         ;Column  ;TotalQty }
+  }
+  REQUESTPAGE
+  {
+    PROPERTIES
+    {
+    }
+    CONTROLS
+    {
+    }
+  }
+  CODE
+  {
+    VAR
+      CompanyLabel@1000 : Text[50];
+      TotalQty@1001 : Decimal;
+
+    BEGIN
+    END.
+  }
+  RDLDATA
+  {
+    <?xml version="1.0" encoding="utf-8"?>
+    <Report><Body>{untouched RDL XML}</Body></Report>
+    END_OF_RDLDATA
+  }
+}
