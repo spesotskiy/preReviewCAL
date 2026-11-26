@@ -26,3 +26,15 @@ jobs:
 
     - name: Test
       run: go test -v ./...
+
+    - name: Build Windows binary
+      env:
+        GOOS: windows
+        GOARCH: amd64
+      run: go build -ldflags "-s -w" -o dist/prereviewcal.exe ./cmd/prereviewcal
+
+    - name: Upload Windows binary
+      uses: actions/upload-artifact@v7
+      with:
+        name: prereviewcal-windows-amd64
+        path: dist/prereviewcal.exe
