@@ -1,0 +1,34 @@
+OBJECT Codeunit 50040 Comments Cleanup
+{
+  OBJECT-PROPERTIES
+  {
+    Date=28.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    PROCEDURE Run@1(CodeP@1000 : Integer);
+    VAR
+      TotalL@1001 : Integer;
+      SalesHeaderL@1002 : Record 36;
+    BEGIN
+      // - important explanation, keep me
+      // LCG AL STR119 17.09.2008
+      IF CodeP > 0 { inline } THEN BEGIN
+        TotalL := CodeP;
+        // LCG PSY NAV-46641 23.11.2026 <<
+        ActiveCode();
+        // LCG PSY NAV-46641 23.11.2026 >>
+      END;
+      MESSAGE('%1 %2', TotalL, SalesHeaderL."No.");
+    END;
+
+    BEGIN
+    END.
+  }
+}

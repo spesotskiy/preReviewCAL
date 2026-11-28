@@ -10,6 +10,7 @@
 |---|---|---|
 | [CAL001](#cal001) | Удаляет неиспользуемые локальные переменные и пустые `VAR`-блоки | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal001_unused_local/input/c50001%20-%20Unused%20Local%20Var.txt) / [expected](testdata/cases/cal001_unused_local/expected/c50001%20-%20Unused%20Local%20Var.txt) |
 | [Пункт 6.2](#task-6-2-empty-triggers) | Удаляет пустые триггеры (FIELDS/PROPERTIES/ELEMENTS), кроме `OnLookup` и `OnRun` Codeunit | [TestEmptyTriggerTableRemoval#L68](internal/rules/empty_trigger_test.go#L68), [input](testdata/cases/empty_trigger_cleanup/input/t50036%20-%20Empty%20Trig%20Table.txt) / [expected](testdata/cases/empty_trigger_cleanup/expected/t50036%20-%20Empty%20Trig%20Table.txt) |
+| [CAL035](#cal035-commented-code) | Пункт 6.3: удаление пустых `{...}`-блоков и закомментированного кода `//`, чистка пустых пар маркеров `<<`/`>>`, защита содержимого `{...}` | [TestCommentsEndToEnd#L246](internal/rules/comments_rules_test.go#L246), [input](testdata/cases/comments_cleanup/input/c50040%20-%20Comments%20Cleanup.txt) / [expected](testdata/cases/comments_cleanup/expected/c50040%20-%20Comments%20Cleanup.txt) |
 | [CAL002](#cal002) | Удаляет неиспользуемые глобальные переменные | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal002_unused_global/input/p50002%20-%20Unused%20Global%20Page.txt) / [expected](testdata/cases/cal002_unused_global/expected/p50002%20-%20Unused%20Global%20Page.txt) |
 | [CAL003](#cal003) | Неиспользуемый параметр — только warning, без правок | [TestDiagnosticWarnings#L124](internal/rules/rules_test.go#L124), [input](testdata/cases/cal003_unused_param/input/c50003%20-%20Unused%20Param.txt) / [expected](testdata/cases/cal003_unused_param/expected/c50003%20-%20Unused%20Param.txt) |
 | [CAL004](#cal004) | Локальные `TextConst` переносит в глобальный `VAR` | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal004_local_textconst/input/c50004%20-%20Local%20TextConst.txt) / [expected](testdata/cases/cal004_local_textconst/expected/c50004%20-%20Local%20TextConst.txt) |
@@ -776,7 +777,7 @@ Case с тенью: глобальная `WorkDate` **не** переимено�
 
 ---
 
-## 4. Очистка пустых конструкций (пункт 6.1)
+## 4. Очистка мёртвых конструкций и комментариев (пункты 6.1, 6.3)
 
 <a id="task-6-1-case-cleanup"></a>
 ### Пункт 6.1 — очистка пустых веток и пустого `CASE` (диагностики под CAL034)
@@ -826,6 +827,52 @@ Case с тенью: глобальная `WorkDate` **не** переимено�
 ```
 
 **Тест:** [case_cleanup_test.go](internal/rules/case_cleanup_test.go#L15) (14 unit-кейсов: [ELSE](internal/rules/case_cleanup_test.go#L15), [ELSE перед END](internal/rules/case_cleanup_test.go#L36), [ветки без ELSE](internal/rules/case_cleanup_test.go#L54), [ELSE с кодом — ветки стоят](internal/rules/case_cleanup_test.go#L76), [каскад до целого CASE](internal/rules/case_cleanup_test.go#L90), [селектор-вызов -> warning](internal/rules/case_cleanup_test.go#L130), [вложенные](internal/rules/case_cleanup_test.go#L146), [комментарии](internal/rules/case_cleanup_test.go#L162), [гейт diff-строк](internal/rules/case_cleanup_test.go#L224), [no-false-positives](internal/rules/case_cleanup_test.go#L243), [end-to-end](internal/rules/case_cleanup_test.go#L267)), golden: [input](testdata/cases/case_empty_cleanup/input/c50035%20-%20Case%20Cleanup.txt) / [expected](testdata/cases/case_empty_cleanup/expected/c50035%20-%20Case%20Cleanup.txt)
+
+<a id="cal035-commented-code"></a>
+### CAL035 — комментарии `{...}`, `//` и маркеры кода (пункт 6.3)
+
+Новое настраиваемое правило `CAL035` / commented-code (проход перед форматированием в `formatCodeBody`, шаг 0):
+
+- Параметры `.prereviewcal.json` (секция `comments`): `codeMarkerPattern` (дефолт — regex маркеров `// LCG <TEAM> <TAG><num> <дата> [<<|>>]`), `commentedCodePattern` (дефолт: `:=`, `;` в конце, управляющее слово в начале строки, вся строка — вызов `Name(...)`), `keepCommentPrefix` (дефолт `-`).
+- Отдельные (не inline) блочные комментарии `{...}` — однострочные и многострочные — удаляются; **inline** `{...}` на строке с кодом сохраняются байт-в-байт; содержимое/отступы внутри `{...}` никогда не анализируются и не меняются (защита строк block-комментариев в `applyIndentation`/`applySpacing`/`applyBlankLines`/`applyAnchoredIndentation` работает всегда, в т.ч. при выключенном правиле).
+- Строковые `//` комментарии: совпал `codeMarkerPattern` -> оставить; текст начинается с `keepCommentPrefix` (`// - ...`) -> всегда оставить; совпал `commentedCodePattern` -> удалить; обычный поясняющий комментарий -> оставить.
+- Если после удаления закомментированного кода между парными маркерами `<<`/`>>` (с одинаковой меткой) не осталось исполняемого кода и защищённых комментариев — удаляются оба маркера; непарные/безнаправленные маркеры и пары с кодом остаются.
+- Хвостовые комментарии на строках с кодом (`Do(); // ...`) не затрагиваются; в diff-режиме обрабатываются только полностью изменённые строки.
+
+**Исходный код:**
+
+```cal
+      { legacy vendor note from 2008 }              // НАРУШЕНИЕ: отдельный блочный комментарий -> удалить
+      // Deprecated: OldVal := 1;                   // НАРУШЕНИЕ: закомментированный код (:=) -> удалить
+      // DoCleanup();                               // НАРУШЕНИЕ: закомментированный вызов с ';' -> удалить
+      // - important explanation, keep me           // НЕ трогать: keepCommentPrefix '-'
+      // LCG PSY NAV-46641 23.11.2026 <<            // НАРУШЕНИЕ: пара пуста после очистки кода -> удалить оба маркера
+      // DeadCode();                                // НАРУШЕНИЕ: закомментированный код -> удалить
+      { fenced block }                              // НАРУШЕНИЕ: блочный комментарий внутри пары -> удалить
+      // LCG PSY NAV-46641 23.11.2026 >>
+      // LCG AL STR119 17.09.2008                   // НЕ трогать: маркер кода (безнаправленный)
+      IF CodeP > 0 { inline } THEN BEGIN            // НЕ трогать: inline-комментарий сохраняется как есть
+        TotalL := CodeP;
+        // LCG PSY NAV-46641 23.11.2026 <<          // НЕ трогать: между маркерами есть исполняемый код
+        ActiveCode();
+        // LCG PSY NAV-46641 23.11.2026 >>
+      END;
+```
+
+**Исправленный код:**
+
+```cal
+      // - important explanation, keep me           // Исправлено: блок и закомментированный код удалены
+      // LCG AL STR119 17.09.2008                   // Исправлено: пустая пара << / >> удалена целиком
+      IF CodeP > 0 { inline } THEN BEGIN            // inline { ... } не тронут
+        TotalL := CodeP;
+        // LCG PSY NAV-46641 23.11.2026 <<          // пара с кодом ActiveCode(); сохранена
+        ActiveCode();
+        // LCG PSY NAV-46641 23.11.2026 >>
+      END;
+```
+
+**Тест:** [TestCommentsConfigDefaultsAndOverride](internal/config/comments_test.go#L5), [comments_rules_test.go](internal/rules/comments_rules_test.go#L17) ([блоки](internal/rules/comments_rules_test.go#L17), [заметки с кодом](internal/rules/comments_rules_test.go#L40), [keep-префикс](internal/rules/comments_rules_test.go#L64), [пустая пара](internal/rules/comments_rules_test.go#L80), [пара с кодом](internal/rules/comments_rules_test.go#L100), [защищённый комментарий в паре](internal/rules/comments_rules_test.go#L112), [непарные маркеры](internal/rules/comments_rules_test.go#L124), [гейт diff](internal/rules/comments_rules_test.go#L136), [идемпотентность](internal/rules/comments_rules_test.go#L151), [защита содержимого {...}](internal/rules/comments_rules_test.go#L172), [правило выключено](internal/rules/comments_rules_test.go#L196), [end-to-end](internal/rules/comments_rules_test.go#L246)), golden: [input](testdata/cases/comments_cleanup/input/c50040%20-%20Comments%20Cleanup.txt) / [expected](testdata/cases/comments_cleanup/expected/c50040%20-%20Comments%20Cleanup.txt)
 
 ---
 
