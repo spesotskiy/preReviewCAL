@@ -388,6 +388,21 @@ func applyKeywordCasing(body string, changedLines map[int]bool, scope *localScop
 			}
 			continue
 		}
+		// Task 1.5: the left side of ':='/'+='/'-='/'*='/'/=' is an assignment
+		// target, never a builtin call reference; do not uppercase it.
+		if next != -1 {
+			switch tokens[next].Kind {
+			case cal.TokAssign, cal.TokPlusAssign, cal.TokMinusAssign, cal.TokMulAssign, cal.TokDivAssign:
+				continue
+			}
+		}
+		// Task 1.5: never uppercase declared variables/parameters/Return Value
+		// (e.g. local "Time" vs builtin TIME()).
+		if scope != nil {
+			if _, declared := scope.vars[strings.ToLower(tok.IdentName())]; declared {
+				continue
+			}
+		}
 		if !pascalCaseBuiltinObjects[upper] && cal.IsGlobalBuiltin(tok.Text) {
 			if (next != -1 && tokens[next].Kind == cal.TokLParen) || cal.IsZeroArgGlobalBuiltin(tok.Text) {
 				if tok.Text != upper {

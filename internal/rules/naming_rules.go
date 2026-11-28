@@ -12,7 +12,18 @@ import (
 
 const navMaxIdentLen = 30
 
-// runSuffixRules implements CAL010 (local variable suffix 'L') and CAL011 (parameter suffix 'P').
+// conflictsGlobalBuiltin reports whether a declared identifier equals a NAV
+// system function name (GlobalBuiltins), e.g. variable "Time" vs TIME() (task 1.5).
+func conflictsGlobalBuiltin(name string) bool {
+	if name == "" || cal.IsStatementKeyword(name) {
+		return false
+	}
+	return cal.IsGlobalBuiltin(name)
+}
+
+// runSuffixRules implements CAL010 (local variable suffix 'L') and CAL011 (parameter suffix 'P'),
+// plus task 1.5 renames for names colliding with system functions
+// (local/Return Value -> +L, parameter -> +P, global -> +G, always with a warning).
 func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diffscope.FileScope) ([]objectfile.SpanEdit, []Diagnostic) {
 	var cs *cal.CodeSection
 	if obj.Code != nil {
@@ -27,6 +38,88 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 
 	var spanEdits []objectfile.SpanEdit
 	var diags []Diagnostic
+
+	// Task 1.5: globals colliding with system function names get the 'G' suffix.
+	// Only safe in full-file mode (every unit gets its references updated) and when
+	// no unit shadows the old or the new name.
+	globalRenames := make(map[string]string) // lower(old global name) -> new name
+	var globalDeclEdits []textEdit
+	if enableLocal && cs != nil && cs.GlobalVars != nil && (fscope == nil || !fscope.Enabled) {
+		shadowed := make(map[string]bool)
+		for _, proc := range cs.Procedures {
+			for _, p := range proc.Params {
+				shadowed[strings.ToLower(p.Name)] = true
+			}
+			if proc.ReturnVar != nil {
+				shadowed[strings.ToLower(proc.ReturnVar.Name)] = true
+			}
+			if proc.LocalVars != nil {
+				for _, lv := range proc.LocalVars.Decls {
+					shadowed[strings.ToLower(lv.Name)] = true
+				}
+			}
+		}
+		for _, tr := range obj.Triggers {
+			td := cal.ParseTrigger(tr.Raw)
+			if td.LocalVars != nil {
+				for _, lv := range td.LocalVars.Decls {
+					shadowed[strings.ToLower(lv.Name)] = true
+				}
+			}
+		}
+		for _, gv := range cs.GlobalVars.Decls {
+			if !conflictsGlobalBuiltin(gv.Name) {
+				continue
+			}
+			newName := gv.Name + "G"
+			lowerOld := strings.ToLower(gv.Name)
+			lowerNew := strings.ToLower(newName)
+			lineNum := obj.LineOfOffset(obj.Code.StartOffset + gv.NameStart)
+			msgSkip := func(why string) {
+				diags = append(diags, Diagnostic{
+					Rule:     config.RuleLocalVarSuffix,
+					Severity: SeverityWarning,
+					Line:     lineNum,
+					Message:  fmt.Sprintf("global variable '%s' collides with system function '%s', but %s; not renamed automatically", gv.Name, strings.ToUpper(gv.Name), why),
+					Fixed:    false,
+				})
+			}
+			if _, isProc := osym.procs[lowerOld]; isProc || shadowed[lowerOld] {
+				msgSkip("the name is shadowed by a procedure or a local/parameter declaration")
+				continue
+			}
+			if len([]rune(newName)) > navMaxIdentLen {
+				msgSkip(fmt.Sprintf("'%s' exceeds NAV 30-char limit", newName))
+				continue
+			}
+			collides := shadowed[lowerNew] || osym.dataItems[lowerNew] > 0
+			if _, isProc := osym.procs[lowerNew]; isProc {
+				collides = true
+			}
+			for _, other := range cs.GlobalVars.Decls {
+				if other != gv && strings.EqualFold(other.Name, newName) {
+					collides = true
+				}
+			}
+			if collides {
+				msgSkip(fmt.Sprintf("'%s' collides with an existing name", newName))
+				continue
+			}
+			globalRenames[lowerOld] = newName
+			globalDeclEdits = append(globalDeclEdits, textEdit{
+				start:   gv.NameStart,
+				end:     gv.NameEnd,
+				newText: cal.FormatIdent(newName, gv.IsQuoted),
+			})
+			diags = append(diags, Diagnostic{
+				Rule:     config.RuleLocalVarSuffix,
+				Severity: SeverityWarning,
+				Line:     lineNum,
+				Message:  fmt.Sprintf("renamed global variable '%s' to '%s': name collided with system function '%s'", gv.Name, newName, strings.ToUpper(gv.Name)),
+				Fixed:    true,
+			})
+		}
+	}
 
 	// 1. Embedded triggers (only local vars, CAL010).
 	if enableLocal {
@@ -89,6 +182,21 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 					Message:  fmt.Sprintf("renamed local variable '%s' to '%s'", lv.Name, newName),
 					Fixed:    true,
 				})
+				if conflictsGlobalBuiltin(lv.Name) {
+					diags = append(diags, Diagnostic{
+						Rule:     config.RuleLocalVarSuffix,
+						Severity: SeverityWarning,
+						Line:     lineNum,
+						Message:  fmt.Sprintf("local variable '%s' collided with system function '%s'; renamed to '%s'", lv.Name, strings.ToUpper(lv.Name), newName),
+						Fixed:    true,
+					})
+				}
+			}
+
+			for k, v := range globalRenames {
+				if _, ok := renames[k]; !ok {
+					renames[k] = v
+				}
 			}
 
 			if len(renames) > 0 {
@@ -185,6 +293,15 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 							Message:  fmt.Sprintf("renamed parameter '%s' to '%s'", param.Name, newName),
 							Fixed:    true,
 						})
+						if conflictsGlobalBuiltin(param.Name) {
+							diags = append(diags, Diagnostic{
+								Rule:     config.RuleParamSuffix,
+								Severity: SeverityWarning,
+								Line:     lineNum,
+								Message:  fmt.Sprintf("parameter '%s' collided with system function '%s'; renamed to '%s'", param.Name, strings.ToUpper(param.Name), newName),
+								Fixed:    true,
+							})
+						}
 					}
 				}
 			}
@@ -227,7 +344,7 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 					renames[strings.ToLower(lv.Name)] = newName
 					codeEdits = append(codeEdits, textEdit{
 						start:   lv.NameStart,
-						end:     lv.NameEnd,
+						end:   lv.NameEnd,
 						newText: cal.FormatIdent(newName, lv.IsQuoted),
 					})
 					diags = append(diags, Diagnostic{
@@ -237,6 +354,64 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 						Message:  fmt.Sprintf("renamed local variable '%s' to '%s'", lv.Name, newName),
 						Fixed:    true,
 					})
+					if conflictsGlobalBuiltin(lv.Name) {
+						diags = append(diags, Diagnostic{
+							Rule:     config.RuleLocalVarSuffix,
+							Severity: SeverityWarning,
+							Line:     lineNum,
+							Message:  fmt.Sprintf("local variable '%s' collided with system function '%s'; renamed to '%s'", lv.Name, strings.ToUpper(lv.Name), newName),
+							Fixed:    true,
+						})
+					}
+				}
+			}
+
+			// Task 1.5: Return Value colliding with a system function gets the local
+			// suffix (Return Values normally carry no suffix).
+			if enableLocal && proc.ReturnVar != nil && proc.ReturnVar.NameEnd > proc.ReturnVar.NameStart &&
+				!proc.IsEventSubscriber() && !proc.IsEventPublisher() &&
+				conflictsGlobalBuiltin(proc.ReturnVar.Name) {
+				oldName := proc.ReturnVar.Name
+				newName := oldName + localSuffix
+				lineNum := obj.LineOfOffset(obj.Code.StartOffset + proc.ReturnVar.NameStart)
+				switch {
+				case len([]rune(newName)) > navMaxIdentLen:
+					diags = append(diags, Diagnostic{
+						Rule:     config.RuleLocalVarSuffix,
+						Severity: SeverityWarning,
+						Line:     lineNum,
+						Message:  fmt.Sprintf("Return Value '%s' collides with system function '%s', but '%s' exceeds NAV 30-char limit; not renamed", oldName, strings.ToUpper(oldName), newName),
+						Fixed:    false,
+					})
+				case occupied[strings.ToLower(newName)]:
+					diags = append(diags, Diagnostic{
+						Rule:     config.RuleLocalVarSuffix,
+						Severity: SeverityWarning,
+						Line:     lineNum,
+						Message:  fmt.Sprintf("Return Value '%s' collides with system function '%s', but '%s' is already in use; not renamed", oldName, strings.ToUpper(oldName), newName),
+						Fixed:    false,
+					})
+				default:
+					occupied[strings.ToLower(newName)] = true
+					renames[strings.ToLower(oldName)] = newName
+					codeEdits = append(codeEdits, textEdit{
+						start:   proc.ReturnVar.NameStart,
+						end:     proc.ReturnVar.NameEnd,
+						newText: cal.FormatIdent(newName, proc.ReturnVar.IsQuoted),
+					})
+					diags = append(diags, Diagnostic{
+						Rule:     config.RuleLocalVarSuffix,
+						Severity: SeverityWarning,
+						Line:     lineNum,
+						Message:  fmt.Sprintf("renamed Return Value '%s' to '%s': name collided with system function '%s'", oldName, newName, strings.ToUpper(oldName)),
+						Fixed:    true,
+					})
+				}
+			}
+
+			for k, v := range globalRenames {
+				if _, ok := renames[k]; !ok {
+					renames[k] = v
 				}
 			}
 
@@ -253,6 +428,7 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 			}
 		}
 
+		codeEdits = append(codeEdits, globalDeclEdits...)
 		if len(codeEdits) > 0 {
 			spanEdits = append(spanEdits, objectfile.SpanEdit{
 				Start:   obj.Code.StartOffset,
@@ -404,6 +580,11 @@ func applyIdentifierRenames(body string, renames map[string]string) string {
 			continue
 		}
 		if newName, ok := renames[strings.ToLower(tok.IdentName())]; ok {
+			// Task 1.5: an exact-UPPERCASE reference to a system builtin (e.g. WORKDATE)
+			// is a function call, not a reference to the colliding variable; never rename it.
+			if tok.Kind == cal.TokIdent && tok.Text == strings.ToUpper(tok.Text) && cal.IsGlobalBuiltin(tok.Text) {
+				continue
+			}
 			edits = append(edits, textEdit{
 				start:   tok.Start,
 				end:     tok.End,

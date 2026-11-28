@@ -1,0 +1,37 @@
+OBJECT Codeunit 50024 Builtin Name Conflict
+{
+  OBJECT-PROPERTIES
+  {
+    Date=28.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    VAR
+      WorkDateG@1000 : Date;
+
+    PROCEDURE GetValueAsTime@1(ValueP@1000 : DateTime) TimeL : Time;
+    VAR
+      CounterL@1001 : Integer;
+    BEGIN
+      TimeL := DT2TIME(ValueP);
+      WorkDateG := WORKDATE();
+      CounterL := 1;
+      MESSAGE('%1 %2', TimeL, CounterL);
+    END;
+
+    PROCEDURE CheckWorkDate@2();
+    BEGIN
+      IF WorkDateG = 0D THEN
+        EXIT;
+    END;
+
+    BEGIN
+    END.
+  }
+}
