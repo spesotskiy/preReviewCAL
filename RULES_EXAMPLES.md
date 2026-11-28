@@ -16,12 +16,12 @@
 | CAL010 | Суффикс `L` у локальных переменных; >30 символов — только warning | [TestDiagnosticWarnings#L168](internal/rules/rules_test.go#L168) |
 | CAL011 | Суффикс `P` у параметров; `[EventSubscriber]` — только warning | [TestDiagnosticWarnings#L143](internal/rules/rules_test.go#L143) |
 | CAL012 | Регистр идентификаторов по объявлению | [input](testdata/cases/cal012_identifier_casing/input/c50012%20-%20Identifier%20Casing.txt) / [expected](testdata/cases/cal012_identifier_casing/expected/c50012%20-%20Identifier%20Casing.txt) |
-| CAL020 | `()` к вызовам без аргументов; `EXIT()` -> `EXIT` | [input](testdata/cases/cal020_call_parens/input/c50020%20-%20Call%20Parens.txt) / [expected](testdata/cases/cal020_call_parens/expected/c50020%20-%20Call%20Parens.txt) |
+| CAL020 | `()` к вызовам без аргументов; `EXIT()` -> `EXIT`; свойства DotNet/Automation/OCX не трогает | [TestCallParensDotNetGuard](internal/rules/dotnet_guard_test.go#L83) |
 | CAL021 | Удаляет избыточные скобки, не склеивая токены | [TestFixRedundantParensNoTokenGluing#L34](internal/rules/parens_rules_test.go#L34) |
 | CAL030 | Отступы блоков (`+2`, `VAR`-секции, `REPEAT`/`UNTIL`) | [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt) |
 | CAL031 | Размещение `BEGIN` для однострочного и многострочного `IF` | [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt) |
 | CAL032 | Пробелы вокруг операторов, запятых, скобок вызова | [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt) |
-| CAL033 | Ключевые слова и встроенные функции в UPPERCASE | [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt) |
+| CAL033 | Ключевые слова и встроенные функции в UPPERCASE; члены DotNet/Automation/OCX не трогаются | [TestKeywordCasingDotNetGuard](internal/rules/dotnet_guard_test.go#L25) / [input](testdata/cases/dotnet_member_guard/input/c50022%20-%20DotNet%20Guard.txt) |
 | CAL034 | Убирает двойные `;;` и лишние пустые строки | [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt) |
 
 ---
@@ -327,6 +327,36 @@
 ```
 
 **Тест:** [TestFixRedundantParensNoTokenGluing](internal/rules/parens_rules_test.go#L34) (10 кейсов, вкл. кириллические идентификаторы, quoted-ident, вызовы), [TestFixRedundantParensOutputLexesSeparately](internal/rules/parens_rules_test.go#L103)
+
+### CAL020 + CAL033 — защита членов DotNet / Automation / OCX (пункт 1.2)
+
+Методы и свойства .NET/Automation/OCX регистрозависимы: CAL033 не меняет регистр членов после `.` у таких получателей (включая цепочки `_XmlDoc.Root.delete()`), CAL020 не добавляет `()` к их свойствам (`.Count`, `Quit` в позиции оператора). Область видимости переменных (`localScope`) прокидывается в `applyKeywordCasing`.
+
+**Исходный код:**
+
+```cal
+      _ServerDocumentFile.delete(_ServerDocumentFileName);
+      IF _XmlDoc.Count > 0 THEN
+        ERROR('Xml count is %1', _XmlDoc.Count);
+      _XmlDoc.DocumentElement.set_OuterXml(_ServerDocumentFileName);
+      OutlookApp.Quit;
+      ItemLedgEntryL.reset;
+      ItemLedgEntryL.deleteall(FALSE);
+```
+
+**Исправленный код** (члены DotNet/Automation сохранены, record-методы исправлены):
+
+```cal
+      _ServerDocumentFile.delete(_ServerDocumentFileNameP);
+      IF _XmlDoc.Count > 0 THEN
+        ERROR('Xml count is %1', _XmlDoc.Count);
+      _XmlDoc.DocumentElement.set_OuterXml(_ServerDocumentFileNameP);
+      OutlookAppL.Quit;
+      ItemLedgEntryL.RESET();
+      ItemLedgEntryL.DELETEALL(FALSE);
+```
+
+**Тест:** [TestKeywordCasingDotNetGuard](internal/rules/dotnet_guard_test.go#L25), [TestCallParensDotNetGuard](internal/rules/dotnet_guard_test.go#L83), [TestChainRootVarAndInterop](internal/rules/dotnet_guard_test.go#L138), golden: [input](testdata/cases/dotnet_member_guard/input/c50022%20-%20DotNet%20Guard.txt) / [expected](testdata/cases/dotnet_member_guard/expected/c50022%20-%20DotNet%20Guard.txt)
 
 ---
 

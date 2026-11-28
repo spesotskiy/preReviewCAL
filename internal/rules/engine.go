@@ -274,6 +274,80 @@ func isMemberAccess(tokens []cal.Token, idx int) bool {
 	return prev != -1 && (tokens[prev].Kind == cal.TokDot || tokens[prev].Kind == cal.TokScope)
 }
 
+// isInteropVarDecl reports whether a variable is declared with an interop type
+// (DotNet / Automation / OCX). Such members are case-sensitive and may be
+// properties, so CAL033 must not change their casing and CAL020 must not
+// auto-add () (task 1.2).
+func isInteropVarDecl(vd *cal.VarDecl) bool {
+	if vd == nil {
+		return false
+	}
+	switch strings.ToLower(vd.BaseType) {
+	case "dotnet", "automation", "ocx":
+		return true
+	}
+	return false
+}
+
+// matchOpenBack returns the index of the opening token matching the closing
+// token at closeIdx, or -1.
+func matchOpenBack(tokens []cal.Token, closeIdx int, open, close cal.TokenKind) int {
+	depth := 0
+	for i := closeIdx; i >= 0; i-- {
+		switch tokens[i].Kind {
+		case close:
+			depth++
+		case open:
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// chainRootVar resolves the leftmost receiver of the member-access chain that
+// ends at recvIdx (the token directly before a '.') and returns its declaration,
+// or nil. Call results A.B(x).C and indexers A[i].C are traversed back to A.
+func chainRootVar(tokens []cal.Token, recvIdx int, scope *localScope) *cal.VarDecl {
+	if scope == nil {
+		return nil
+	}
+	i := recvIdx
+	for i >= 0 {
+		switch tokens[i].Kind {
+		case cal.TokRParen:
+			lp := matchOpenBack(tokens, i, cal.TokLParen, cal.TokRParen)
+			if lp <= 0 {
+				return nil
+			}
+			i = cal.PrevCode(tokens, lp-1)
+			continue
+		case cal.TokRBracket:
+			lb := matchOpenBack(tokens, i, cal.TokLBracket, cal.TokRBracket)
+			if lb <= 0 {
+				return nil
+			}
+			i = cal.PrevCode(tokens, lb-1)
+			continue
+		}
+		p := cal.PrevCode(tokens, i-1)
+		if p == -1 || tokens[p].Kind != cal.TokDot {
+			break
+		}
+		i = cal.PrevCode(tokens, p-1)
+	}
+	if i < 0 || i >= len(tokens) {
+		return nil
+	}
+	t := tokens[i]
+	if t.Kind != cal.TokIdent && t.Kind != cal.TokQuotedIdent {
+		return nil
+	}
+	return scope.vars[strings.ToLower(t.IdentName())]
+}
+
 // objectSymbols caches globals, procedures, dataitems, and table fields for an ObjectFile.
 type objectSymbols struct {
 	globals    map[string]*cal.VarDecl

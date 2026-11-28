@@ -1,0 +1,40 @@
+OBJECT Codeunit 50022 DotNet Guard
+{
+  OBJECT-PROPERTIES
+  {
+    Date=28.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    VAR
+      _ServerDocumentFile@1000 : DotNet "System.IO.FileInfo, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089";
+      _XmlDoc@1001 : DotNet "System.Xml.XmlDocument, System.Xml, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089";
+
+    PROCEDURE ExportFiles@1(_ServerDocumentFileNameP@1000 : Text[250]);
+    VAR
+      OutlookAppL@1001 : Automation "{0006F03A-0000-0000-C000-000000000046} 8.0:OL:Outlook.Application";
+      ItemLedgEntryL@1002 : Record 32;
+    BEGIN
+      // Task 1.2 (CAL033): .NET methods are case-sensitive: .delete() must NOT become .DELETE()
+      _ServerDocumentFile.delete(_ServerDocumentFileNameP);
+      // Task 1.2 (CAL020): .NET properties must NOT get ()
+      IF _XmlDoc.Count > 0 THEN
+        ERROR('Xml count is %1', _XmlDoc.Count);
+      _XmlDoc.DocumentElement.set_OuterXml(_ServerDocumentFileNameP);
+      // Task 1.2: Automation/OCX member in statement position must NOT get ()
+      OutlookAppL.Quit;
+      // Record methods MUST still be fixed (CAL020 + CAL033)
+      ItemLedgEntryL.RESET();
+      ItemLedgEntryL.DELETEALL(FALSE);
+    END;
+
+    BEGIN
+    END.
+  }
+}

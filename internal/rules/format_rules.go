@@ -15,13 +15,19 @@ func runFormatRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 	var spanEdits []objectfile.SpanEdit
 	var diags []Diagnostic
 
+	var cs *cal.CodeSection
+	if obj.Code != nil {
+		cs = cal.ParseCodeSection(obj.Code.Raw)
+	}
+	osym := buildObjectSymbols(obj, cs)
+
 	// Embedded triggers.
 	for _, tr := range obj.Triggers {
 		us := fscope.TriggerScope(tr)
 		if us.Mode == diffscope.ModeSkip {
 			continue
 		}
-		newRaw, d := formatTrigger(tr, cfg, obj, us)
+		newRaw, d := formatTrigger(tr, cfg, obj, us, osym)
 		diags = append(diags, d...)
 		if newRaw != tr.Raw {
 			spanEdits = append(spanEdits, objectfile.SpanEdit{
@@ -34,7 +40,7 @@ func runFormatRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 
 	// CODE section.
 	if obj.Code != nil {
-		newCode, d := formatCodeSection(obj.Code, cfg, obj, fscope)
+		newCode, d := formatCodeSection(obj.Code, cfg, obj, fscope, cs, osym)
 		diags = append(diags, d...)
 		if newCode != obj.Code.Raw {
 			spanEdits = append(spanEdits, objectfile.SpanEdit{
@@ -48,7 +54,7 @@ func runFormatRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 	return spanEdits, diags
 }
 
-func formatTrigger(tr objectfile.TriggerBlock, cfg *config.Config, obj *objectfile.ObjectFile, us *diffscope.UnitScope) (string, []Diagnostic) {
+func formatTrigger(tr objectfile.TriggerBlock, cfg *config.Config, obj *objectfile.ObjectFile, us *diffscope.UnitScope, osym *objectSymbols) (string, []Diagnostic) {
 	cur := tr.Raw
 	var diags []Diagnostic
 	eol := obj.LineEnding
@@ -57,6 +63,7 @@ func formatTrigger(tr objectfile.TriggerBlock, cfg *config.Config, obj *objectfi
 	if td.BodyStart < 0 || td.BodyEnd <= td.BodyStart {
 		return cur, nil
 	}
+	scope := buildLocalScope(nil, nil, td.LocalVars, osym)
 
 	var edits []textEdit
 
@@ -81,7 +88,7 @@ func formatTrigger(tr objectfile.TriggerBlock, cfg *config.Config, obj *objectfi
 		}
 	}
 	body := cur[bodySliceStart:td.BodyEnd]
-	newBody, bodyDiags := formatCodeBody(body, tr.BaseIndent, bodyFirstLineNoIndent, cfg, obj, us, tr.StartOffset+bodySliceStart)
+	newBody, bodyDiags := formatCodeBody(body, tr.BaseIndent, bodyFirstLineNoIndent, cfg, obj, us, tr.StartOffset+bodySliceStart, scope)
 	diags = append(diags, bodyDiags...)
 	if newBody != body {
 		edits = append(edits, textEdit{start: bodySliceStart, end: td.BodyEnd, newText: newBody})
@@ -90,8 +97,7 @@ func formatTrigger(tr objectfile.TriggerBlock, cfg *config.Config, obj *objectfi
 	return applyTextEdits(cur, edits), diags
 }
 
-func formatCodeSection(cb *objectfile.CodeBlock, cfg *config.Config, obj *objectfile.ObjectFile, fscope *diffscope.FileScope) (string, []Diagnostic) {
-	cs := cal.ParseCodeSection(cb.Raw)
+func formatCodeSection(cb *objectfile.CodeBlock, cfg *config.Config, obj *objectfile.ObjectFile, fscope *diffscope.FileScope, cs *cal.CodeSection, osym *objectSymbols) (string, []Diagnostic) {
 	var edits []textEdit
 	var diags []Diagnostic
 	eol := obj.LineEnding
@@ -149,9 +155,10 @@ func formatCodeSection(cb *objectfile.CodeBlock, cfg *config.Config, obj *object
 
 		// Procedure body (Documentation block at cs.DocStart..cs.DocEnd is untouched!).
 		if proc.BodyStart >= 0 && proc.BodyEnd > proc.BodyStart {
+			scope := buildLocalScope(proc.Params, proc.ReturnVar, proc.LocalVars, osym)
 			bodyLineStart := lineStartPos(cb.Raw, proc.BodyStart)
 			body := cb.Raw[bodyLineStart:proc.BodyEnd]
-			newBody, bodyDiags := formatCodeBody(body, 4, false, cfg, obj, us, cb.StartOffset+bodyLineStart)
+			newBody, bodyDiags := formatCodeBody(body, 4, false, cfg, obj, us, cb.StartOffset+bodyLineStart, scope)
 			diags = append(diags, bodyDiags...)
 			if newBody != body {
 				edits = append(edits, textEdit{start: bodyLineStart, end: proc.BodyEnd, newText: newBody})
@@ -234,7 +241,7 @@ func formatVarSection(raw string, baseIndent int, firstLineNoIndent bool, cfg *c
 	return cur
 }
 
-func formatCodeBody(body string, baseIndent int, firstLineNoIndent bool, cfg *config.Config, obj *objectfile.ObjectFile, us *diffscope.UnitScope, fileBaseOffset int) (string, []Diagnostic) {
+func formatCodeBody(body string, baseIndent int, firstLineNoIndent bool, cfg *config.Config, obj *objectfile.ObjectFile, us *diffscope.UnitScope, fileBaseOffset int, scope *localScope) (string, []Diagnostic) {
 	cur := body
 	var diags []Diagnostic
 	eol := obj.LineEnding
@@ -249,7 +256,7 @@ func formatCodeBody(body string, baseIndent int, firstLineNoIndent bool, cfg *co
 
 	// 1. CAL033: Keyword casing (UPPERCASE).
 	if cfg.IsRuleEnabled(config.RuleKeywordCasing) {
-		next, changed := applyKeywordCasing(cur, getChanged(cur))
+		next, changed := applyKeywordCasing(cur, getChanged(cur), scope)
 		if changed {
 			cur = next
 			diags = append(diags, Diagnostic{
@@ -343,7 +350,7 @@ var pascalCaseBuiltinObjects = map[string]bool{
 	"SYSTEM":      true,
 }
 
-func applyKeywordCasing(body string, changedLines map[int]bool) (string, bool) {
+func applyKeywordCasing(body string, changedLines map[int]bool, scope *localScope) (string, bool) {
 	tokens := cal.Lex(body)
 	var edits []textEdit
 	for i, tok := range tokens {
@@ -360,6 +367,10 @@ func applyKeywordCasing(body string, changedLines map[int]bool) (string, bool) {
 			continue
 		}
 		if prev != -1 && tokens[prev].Kind == cal.TokDot {
+			// DotNet/Automation/OCX members are case-sensitive: never touch them (task 1.2).
+			if isInteropVarDecl(chainRootVar(tokens, cal.PrevCode(tokens, prev-1), scope)) {
+				continue
+			}
 			// Uppercase built-in Record/Object method calls when invoked with '('.
 			if next != -1 && tokens[next].Kind == cal.TokLParen && (cal.IsRecordMethod(tok.Text) || cal.IsObjectZeroArgMethod(tok.Text)) {
 				upper := strings.ToUpper(tok.Text)
