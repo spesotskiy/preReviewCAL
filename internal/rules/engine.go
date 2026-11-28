@@ -193,9 +193,11 @@ func ProcessWithScope(input []byte, cfg *config.Config, ws *objectfile.Workspace
 		}
 	}
 
-	// Pass 8: CAL033 (keyword-casing), CAL034 (blank-lines-and-semicolons),
+	// Pass 8: CAL035 (commented-code, task 6.3), CAL033 (keyword-casing),
+	//         CAL034 (blank-lines-and-semicolons, incl. empty-CASE cleanup),
 	//         CAL032 (spacing), CAL031 (begin-placement), CAL030 (indentation).
-	if cfg.IsRuleEnabled(config.RuleKeywordCasing) ||
+	if cfg.IsRuleEnabled(config.RuleCommentedCode) ||
+		cfg.IsRuleEnabled(config.RuleKeywordCasing) ||
 		cfg.IsRuleEnabled(config.RuleBlankLinesAndSemicols) ||
 		cfg.IsRuleEnabled(config.RuleSpacing) ||
 		cfg.IsRuleEnabled(config.RuleBeginPlacement) ||

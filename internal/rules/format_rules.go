@@ -201,12 +201,16 @@ func formatPartialVarDecls(raw string, vs *cal.VarSection, baseIndent int, cfg *
 
 func formatVarSection(raw string, baseIndent int, firstLineNoIndent bool, cfg *config.Config, eol string) string {
 	cur := raw
+	protected := blockCommentLineSet(cur)
 	if cfg.IsRuleEnabled(config.RuleKeywordCasing) {
 		cur = uppercaseDeclKeywords(cur)
 	}
 	if cfg.IsRuleEnabled(config.RuleSpacing) {
 		lines := splitLinesKeepEOL(cur)
 		for i, l := range lines {
+			if protected[i] {
+				continue
+			}
 			text, le := splitLineEOL(l)
 			lines[i] = strings.TrimRight(text, " \t") + le
 		}
@@ -216,6 +220,9 @@ func formatVarSection(raw string, baseIndent int, firstLineNoIndent bool, cfg *c
 		indentSize := cfg.IndentSize()
 		lines := splitLinesKeepEOL(cur)
 		for i, l := range lines {
+			if protected[i] {
+				continue
+			}
 			text, le := splitLineEOL(l)
 			trimmed := strings.TrimSpace(text)
 			if trimmed == "" {
@@ -254,7 +261,17 @@ func formatCodeBody(body string, baseIndent int, firstLineNoIndent bool, cfg *co
 		return us.ChangedBodyLines(text)
 	}
 
-	// 0. Task 6.1 (under CAL034): remove empty CASE arms/ELSE sections and fully
+	// 0. CAL035 (task 6.3): remove standalone {...} block comments and
+	// commented-out "//" code lines; clean empty << / >> marker pairs.
+	if cfg.IsRuleEnabled(config.RuleCommentedCode) {
+		next, d := applyCommentRules(cur, getChanged(cur), cfg, obj, fileBaseOffset)
+		diags = append(diags, d...)
+		if next != cur {
+			cur = next
+		}
+	}
+
+	// 0b. Task 6.1 (under CAL034): remove empty CASE arms/ELSE sections and fully
 	// empty CASE ... END; constructs BEFORE the formatting passes.
 	if cfg.IsRuleEnabled(config.RuleBlankLinesAndSemicols) {
 		next, d := applyCaseCleanup(cur, getChanged(cur), obj, fileBaseOffset)
@@ -490,11 +507,12 @@ func applyBlankLinesAndSemicolons(body string, changedLines map[int]bool) (strin
 
 	// 2. Collapse consecutive blank lines (2+ blank lines -> 1 blank line).
 	lines := splitLinesKeepEOL(cur)
+	protected := blockCommentLineSet(cur)
 	var out []string
 	blankRun := 0
 	for idx, l := range lines {
 		text, le := splitLineEOL(l)
-		if strings.TrimSpace(text) == "" {
+		if !protected[idx] && strings.TrimSpace(text) == "" {
 			blankRun++
 			if blankRun <= 1 {
 				out = append(out, le)
@@ -663,10 +681,16 @@ func leadingSpacesOfOffset(s string, offset int) string {
 
 func applySpacing(body string, changedLines map[int]bool) (string, bool) {
 	lines := splitLinesKeepEOL(body)
+	protected := blockCommentLineSet(body)
 	var out []string
 	changed := false
 
 	for idx, line := range lines {
+		if protected[idx] {
+			// Never re-space content inside {...} block comments (task 6.3).
+			out = append(out, line)
+			continue
+		}
 		if changedLines != nil && !changedLines[idx+1] {
 			out = append(out, line)
 			continue
@@ -844,6 +868,7 @@ func applyAnchoredIndentation(body string, baseIndent int, indentSize int, first
 		indentSize = 2
 	}
 	lines := splitLinesKeepEOL(body)
+	protected := blockCommentLineSet(body)
 	var out []string
 	changed := false
 
@@ -856,6 +881,12 @@ func applyAnchoredIndentation(body string, baseIndent int, indentSize int, first
 
 	i := 0
 	for i < len(lines) {
+		if protected[i] {
+			// Inside a {...} block comment: emit verbatim, do not touch anchors.
+			out = append(out, lines[i])
+			i++
+			continue
+		}
 		if !changedLines[i+1] {
 			// Unchanged old line: preserve verbatim and update anchor state.
 			out = append(out, lines[i])
@@ -951,6 +982,7 @@ func applyIndentation(body string, baseIndent int, indentSize int, firstLineNoIn
 	}
 
 	lines := splitLinesKeepEOL(body)
+	protected := blockCommentLineSet(body)
 	var out []string
 	var stack []indentFrame
 	changed := false
@@ -969,6 +1001,11 @@ func applyIndentation(body string, baseIndent int, indentSize int, firstLineNoIn
 	}
 
 	for lineIdx, rawLine := range lines {
+		if protected[lineIdx] {
+			// Never re-indent content inside {...} block comments (task 6.3).
+			out = append(out, rawLine)
+			continue
+		}
 		text, le := splitLineEOL(rawLine)
 		trimmed := strings.TrimSpace(text)
 		if trimmed == "" {

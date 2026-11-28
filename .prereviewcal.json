@@ -18,6 +18,11 @@
   "diff": {
     "maxOldFunctionLines": 50
   },
+  "comments": {
+    "codeMarkerPattern": "^\\s*//\\s*LCG\\s+[A-Za-z]{2,4}\\s+(?:[A-Za-z]+-?\\d+)\\s+\\d{2}\\.\\d{2}\\.\\d{4}(?:\\s*(?:<<|>>).*)?$",
+    "commentedCodePattern": "(?i)(:=|;\\s*$|^(IF|THEN|ELSE|BEGIN|END|CASE|REPEAT|UNTIL|FOR|WHILE|WITH|EXIT)\\b|^[A-Za-z_][A-Za-z0-9_]*([ .][A-Za-z0-9_""]+)?\\s*\\(.*\\)\\s*;?$)",
+    "keepCommentPrefix": "-"
+  },
   "rules": {
     "CAL001": { "enabled": true },
     "CAL002": { "enabled": true },
@@ -33,6 +38,7 @@
     "CAL031": { "enabled": true },
     "CAL032": { "enabled": true },
     "CAL033": { "enabled": true },
-    "CAL034": { "enabled": true }
+    "CAL034": { "enabled": true },
+    "CAL035": { "enabled": true }
   }
 }

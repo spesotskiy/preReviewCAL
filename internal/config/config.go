@@ -26,6 +26,7 @@ const (
 	RuleSpacing               = "CAL032"
 	RuleKeywordCasing         = "CAL033"
 	RuleBlankLinesAndSemicols = "CAL034"
+	RuleCommentedCode         = "CAL035"
 )
 
 var AllRuleCodes = []string{
@@ -44,6 +45,7 @@ var AllRuleCodes = []string{
 	RuleSpacing,
 	RuleKeywordCasing,
 	RuleBlankLinesAndSemicols,
+	RuleCommentedCode,
 }
 
 type FileNamingConfig struct {
@@ -64,10 +66,34 @@ type DiffConfig struct {
 	MaxOldFunctionLines int `json:"maxOldFunctionLines"`
 }
 
+// Default patterns for the CAL035 commented-code cleanup (task 6.3).
+const (
+	DefaultCodeMarkerPattern = `^\s*//\s*LCG\s+[A-Za-z]{2,4}\s+(?:[A-Za-z]+-?\d+)\s+\d{2}\.\d{2}\.\d{4}(?:\s*(?:<<|>>).*)?$`
+	// Applied to the comment text after trimming the leading "//" and whitespace:
+	// matches ':=', a trailing ';', a control keyword at the start, or the whole
+	// line being a procedure/method call statement like 'DoSomething(...);'.
+	DefaultCommentedCodePattern = `(?i)(:=|;\s*$|^(IF|THEN|ELSE|BEGIN|END|CASE|REPEAT|UNTIL|FOR|WHILE|WITH|EXIT)\b|^[A-Za-z_][A-Za-z0-9_]*([ .][A-Za-z0-9_"]+)?\s*\(.*\)\s*;?$)`
+	DefaultKeepCommentPrefix    = "-"
+)
+
+// CommentsConfig configures the CAL035 commented-code rule (task 6.3).
+type CommentsConfig struct {
+	CodeMarkerPattern    string `json:"codeMarkerPattern"`
+	CommentedCodePattern string `json:"commentedCodePattern"`
+	KeepCommentPrefix    string `json:"keepCommentPrefix"`
+}
+
+func (cc CommentsConfig) Patterns() (marker, commented *regexp.Regexp) {
+	marker, _ = regexp.Compile(cc.CodeMarkerPattern)
+	commented, _ = regexp.Compile(cc.CommentedCodePattern)
+	return
+}
+
 type Config struct {
 	Encoding   string                `json:"encoding"`
 	LineEnding string                `json:"lineEnding"`
 	SymbolsDir string                `json:"symbolsDir"`
+	Comments   CommentsConfig        `json:"comments"`
 	FileNaming FileNamingConfig      `json:"fileNaming"`
 	Diff       DiffConfig            `json:"diff"`
 	Rules      map[string]RuleConfig `json:"rules"`
@@ -93,6 +119,11 @@ func Default() *Config {
 	return &Config{
 		Encoding:   "utf-8-nobom",
 		LineEnding: "preserve",
+		Comments: CommentsConfig{
+			CodeMarkerPattern:    DefaultCodeMarkerPattern,
+			CommentedCodePattern: DefaultCommentedCodePattern,
+			KeepCommentPrefix:    DefaultKeepCommentPrefix,
+		},
 		FileNaming: FileNamingConfig{
 			Template: "{prefix}{id} - {name}.txt",
 			TypePrefixes: map[string]string{
@@ -142,6 +173,7 @@ func Parse(data []byte) (*Config, error) {
 		Encoding   string            `json:"encoding"`
 		LineEnding string            `json:"lineEnding"`
 		SymbolsDir string            `json:"symbolsDir"`
+		Comments   *CommentsConfig   `json:"comments"`
 		FileNaming *FileNamingConfig `json:"fileNaming"`
 		Diff       *struct {
 			MaxOldFunctionLines *int `json:"maxOldFunctionLines"`
@@ -160,6 +192,24 @@ func Parse(data []byte) (*Config, error) {
 	}
 	if raw.SymbolsDir != "" {
 		cfg.SymbolsDir = raw.SymbolsDir
+	}
+	if raw.Comments != nil {
+		if raw.Comments.CodeMarkerPattern != "" {
+			if _, err := regexp.Compile(raw.Comments.CodeMarkerPattern); err != nil {
+				return nil, fmt.Errorf("comments.codeMarkerPattern: invalid regexp: %w", err)
+			}
+			cfg.Comments.CodeMarkerPattern = raw.Comments.CodeMarkerPattern
+		}
+		if raw.Comments.CommentedCodePattern != "" {
+			if _, err := regexp.Compile(raw.Comments.CommentedCodePattern); err != nil {
+				return nil, fmt.Errorf("comments.commentedCodePattern: invalid regexp: %w", err)
+			}
+			cfg.Comments.CommentedCodePattern = raw.Comments.CommentedCodePattern
+		}
+		cfg.Comments.KeepCommentPrefix = raw.Comments.KeepCommentPrefix
+		if cfg.Comments.KeepCommentPrefix == "" {
+			cfg.Comments.KeepCommentPrefix = DefaultKeepCommentPrefix
+		}
 	}
 	if raw.FileNaming != nil {
 		if raw.FileNaming.Template != "" {
