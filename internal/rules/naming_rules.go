@@ -126,8 +126,9 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 
 			// CAL011: Parameters (skipped for ModePartial large old functions).
 			if enableParam && us.Mode == diffscope.ModeFull && len(proc.Params) > 0 {
-				isEventSub := proc.HasAttribute("EventSubscriber")
-				isEventPub := proc.HasAttribute("IntegrationEvent") || proc.HasAttribute("BusinessEvent")
+				isEventSub := proc.IsEventSubscriber()
+				// NAV 2017 [Integration]/[Business] publishers are fully excluded from CAL011 (task 1.4).
+				isEventPub := proc.IsEventPublisher()
 				isSysTrig := cal.IsSystemTriggerName(proc.Name)
 
 				if isEventSub {

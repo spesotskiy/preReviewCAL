@@ -162,8 +162,9 @@ func runUnusedParamRule(obj *objectfile.ObjectFile, _ *config.Config, fscope *di
 		if proc.IsEvent || proc.BodyStart < 0 || proc.BodyEnd <= proc.BodyStart {
 			continue
 		}
-		// Skip event publishers (their bodies are intentionally empty) and system triggers.
-		if proc.HasAttribute("IntegrationEvent") || proc.HasAttribute("BusinessEvent") || cal.IsSystemTriggerName(proc.Name) {
+		// Skip event publishers (NAV 2017 [Integration]/[Business] and AL [IntegrationEvent]/[BusinessEvent],
+		// their bodies are intentionally empty) and system triggers (task 1.4).
+		if proc.IsEventPublisher() || cal.IsSystemTriggerName(proc.Name) {
 			continue
 		}
 		refs := collectUnqualifiedRefs(obj.Code.Raw[proc.BodyStart:proc.BodyEnd])
