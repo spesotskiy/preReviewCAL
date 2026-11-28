@@ -67,6 +67,7 @@ type DiffConfig struct {
 type Config struct {
 	Encoding   string                `json:"encoding"`
 	LineEnding string                `json:"lineEnding"`
+	SymbolsDir string                `json:"symbolsDir"`
 	FileNaming FileNamingConfig      `json:"fileNaming"`
 	Diff       DiffConfig            `json:"diff"`
 	Rules      map[string]RuleConfig `json:"rules"`
@@ -140,6 +141,7 @@ func Parse(data []byte) (*Config, error) {
 	var raw struct {
 		Encoding   string            `json:"encoding"`
 		LineEnding string            `json:"lineEnding"`
+		SymbolsDir string            `json:"symbolsDir"`
 		FileNaming *FileNamingConfig `json:"fileNaming"`
 		Diff       *struct {
 			MaxOldFunctionLines *int `json:"maxOldFunctionLines"`
@@ -155,6 +157,9 @@ func Parse(data []byte) (*Config, error) {
 	}
 	if raw.LineEnding != "" {
 		cfg.LineEnding = raw.LineEnding
+	}
+	if raw.SymbolsDir != "" {
+		cfg.SymbolsDir = raw.SymbolsDir
 	}
 	if raw.FileNaming != nil {
 		if raw.FileNaming.Template != "" {

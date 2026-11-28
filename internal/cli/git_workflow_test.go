@@ -187,7 +187,7 @@ func TestGitWorkflowsThreeModes(t *testing.T) {
 
 		// 1a. check --staged detects dirty staged code and returns exit code 1.
 		var stdout, stderr bytes.Buffer
-		code := Run([]string{"check", "--staged", "--repo", repo}, &stdout, &stderr)
+		code := Run([]string{"check", "--symbols-dir", repo, "--staged", "--repo", repo}, &stdout, &stderr)
 		if code != 1 {
 			t.Fatalf("check --staged exit=%d want 1 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
 		}
@@ -195,7 +195,7 @@ func TestGitWorkflowsThreeModes(t *testing.T) {
 		// 1b. fix --staged cleans ONLY the staged modifications (+ global VAR trash) on disk.
 		stdout.Reset()
 		stderr.Reset()
-		code = Run([]string{"fix", "--staged", "--repo", repo}, &stdout, &stderr)
+		code = Run([]string{"fix", "--symbols-dir", repo, "--staged", "--repo", repo}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("fix --staged exit=%d want 0 (stderr=%s)", code, stderr.String())
 		}
@@ -218,7 +218,7 @@ func TestGitWorkflowsThreeModes(t *testing.T) {
 		runGitCmd(t, repo, "add", c50200Path)
 		stdout.Reset()
 		stderr.Reset()
-		code = Run([]string{"check", "--staged", "--repo", repo}, &stdout, &stderr)
+		code = Run([]string{"check", "--symbols-dir", repo, "--staged", "--repo", repo}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("check --staged after fix exit=%d want 0 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
 		}
@@ -269,7 +269,7 @@ func TestGitWorkflowsThreeModes(t *testing.T) {
 
 		// Polish entire branch against main in one command!
 		var stdout, stderr bytes.Buffer
-		code := Run([]string{"fix", "--git-base", "main", "--repo", repo}, &stdout, &stderr)
+		code := Run([]string{"fix", "--symbols-dir", repo, "--git-base", "main", "--repo", repo}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("fix --git-base main exit=%d want 0 (stderr=%s)", code, stderr.String())
 		}
@@ -297,7 +297,7 @@ func TestGitWorkflowsThreeModes(t *testing.T) {
 		// Verify check --git-base main is now 100% green (exit code 0)!
 		stdout.Reset()
 		stderr.Reset()
-		code = Run([]string{"check", "--git-base", "main", "--repo", repo}, &stdout, &stderr)
+		code = Run([]string{"check", "--symbols-dir", repo, "--git-base", "main", "--repo", repo}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("check --git-base main after polish exit=%d want 0 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
 		}
@@ -312,7 +312,7 @@ func TestGitWorkflowsThreeModes(t *testing.T) {
 	t.Run("Workflow3_CICD_MergeRequestCheck", func(t *testing.T) {
 		// 3a. Clean MR branch (feature/clean-nav vs main) passes CI check with exit 0!
 		var stdout, stderr bytes.Buffer
-		code := Run([]string{"check", "--git-base", "main", "--git-head", "feature/clean-nav", "--repo", repo}, &stdout, &stderr)
+		code := Run([]string{"check", "--symbols-dir", repo, "--git-base", "main", "--git-head", "feature/clean-nav", "--repo", repo}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("CI check on clean MR exit=%d want 0 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
 		}
@@ -334,7 +334,7 @@ func TestGitWorkflowsThreeModes(t *testing.T) {
 
 		stdout.Reset()
 		stderr.Reset()
-		code = Run([]string{"check", "--git-base", "main", "--git-head", "feature/mr-dirty", "--diff", "--repo", repo}, &stdout, &stderr)
+		code = Run([]string{"check", "--symbols-dir", repo, "--git-base", "main", "--git-head", "feature/mr-dirty", "--diff", "--repo", repo}, &stdout, &stderr)
 		if code != 1 {
 			t.Fatalf("CI check on dirty MR exit=%d want 1 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
 		}

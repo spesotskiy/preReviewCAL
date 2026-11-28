@@ -27,6 +27,14 @@ OBJECT Table 32 Item Ledger Entry
   }
   CODE
   {
+    PROCEDURE SetUseADO@100(UseADO@1000 : Boolean);
+    BEGIN
+    END;
+
+    LOCAL PROCEDURE InternalHelper@101();
+    BEGIN
+    END;
+
     BEGIN
     END.
   }
