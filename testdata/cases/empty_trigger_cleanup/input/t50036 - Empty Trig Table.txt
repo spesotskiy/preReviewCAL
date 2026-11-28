@@ -1,0 +1,49 @@
+OBJECT Table 50036 Empty Trig Table
+{
+  OBJECT-PROPERTIES
+  {
+    Date=28.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+    OnDelete=BEGIN
+             END;
+
+    OnInsert=BEGIN
+               TotalL := 1;
+             END;
+
+    OnRename=BEGIN
+               // explanatory comment stays
+             END;
+
+    OnLookup=BEGIN
+             END;
+  }
+  FIELDS
+  {
+    { 1   ;   ;Entry No.           ;Integer        ;OnValidate=VAR
+                                                                  UnusedL@1000 : Integer;
+                                                                BEGIN
+                                                                END;
+                                                    CaptionML=ENU=Entry No. }
+    { 2   ;   ;Code Field          ;Code20         ;OnLookup=BEGIN
+                                                               END;
+                                             }
+    { 3   ;   ;Keep Field          ;Integer        ;OnNewRecord=BEGIN
+                                                                  TotalL := 2;
+                                                                END;
+                                             }
+  }
+  CODE
+  {
+    VAR
+      TotalL@1000 : Integer;
+
+    BEGIN
+    END.
+  }
+}

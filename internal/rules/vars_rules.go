@@ -380,3 +380,138 @@ func buildVarRemovalEdits(raw string, vs *cal.VarSection, toRemove []*cal.VarDec
 	}
 	return edits
 }
+
+// runEmptyTriggerRule implements task 6.2: a trigger in FIELDS / PROPERTIES / ELEMENTS
+// with no executable code and no comments (initially, or after CAL001 removed its
+// unused variables) is removed entirely ("OnValidate=...;", "OnPostXMLport=...;").
+// Exceptions: OnLookup is never removed (an empty OnLookup changes NAV UI behavior -
+// the "..." button appears) and OnRun is never removed in Codeunits (entry point).
+// Diagnostics are reported under CAL001 (unused-local-var cleanup family).
+func runEmptyTriggerRule(obj *objectfile.ObjectFile, _ *config.Config, fscope *diffscope.FileScope) ([]objectfile.SpanEdit, []Diagnostic) {
+	var spanEdits []objectfile.SpanEdit
+	var diags []Diagnostic
+
+	for _, tr := range obj.Triggers {
+		switch strings.ToLower(tr.SectionName) {
+		case "fields", "properties", "elements":
+		default:
+			continue
+		}
+		us := fscope.TriggerScope(tr)
+		if us.Mode != diffscope.ModeFull {
+			continue
+		}
+		if strings.EqualFold(tr.Name, "OnLookup") {
+			continue
+		}
+		if strings.EqualFold(tr.Name, "OnRun") && strings.EqualFold(obj.ObjectType, "Codeunit") {
+			continue
+		}
+		if !triggerIsEmpty(obj.Raw, tr) {
+			continue
+		}
+		start, end, ok := triggerPropertySpan(obj.Raw, tr)
+		if !ok {
+			continue
+		}
+		spanEdits = append(spanEdits, objectfile.SpanEdit{Start: start, End: end, NewText: ""})
+		diags = append(diags, Diagnostic{
+			Rule:     config.RuleUnusedLocalVar,
+			Severity: SeverityInfo,
+			Line:     obj.LineOfOffset(start),
+			Message:  fmt.Sprintf("removed empty trigger '%s' from %s section", tr.Name, tr.SectionName),
+			Fixed:    true,
+		})
+	}
+	return spanEdits, diags
+}
+
+// triggerIsEmpty reports whether the trigger has no VAR declarations, no comments
+// and no executable code between BEGIN and END.
+func triggerIsEmpty(raw string, tr objectfile.TriggerBlock) bool {
+	td := cal.ParseTrigger(raw[tr.StartOffset:tr.EndOffset])
+	if td.BodyStart < 0 || td.BodyEnd <= td.BodyStart {
+		return false
+	}
+	if td.LocalVars != nil && len(td.LocalVars.Decls) > 0 {
+		return false
+	}
+	// The parsed body spans BEGIN..END[;]; emptiness means nothing in between.
+	for _, t := range cal.Lex(raw[tr.StartOffset+td.BodyStart : tr.StartOffset+td.BodyEnd]) {
+		if t.IsComment() {
+			return false
+		}
+		if t.IsTrivia() || t.Kind == cal.TokEOF {
+			continue
+		}
+		if t.IsWord("BEGIN") || t.IsWord("END") || t.Kind == cal.TokSemi {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// triggerPropertySpan returns the byte range of the whole trigger property
+// (from its "Name=" in the owning line/section up to and including "END;", plus
+// trailing separators) suitable for removal from the object text.
+func triggerPropertySpan(raw string, tr objectfile.TriggerBlock) (int, int, bool) {
+	needle := tr.Name + "="
+	// The property name sits directly before VAR/BEGIN; search a small window.
+	winStart := tr.StartOffset - len(needle) - 8
+	if winStart < 0 {
+		winStart = 0
+	}
+	nameIdx := -1
+	idx := strings.LastIndex(strings.ToLower(raw[winStart:tr.StartOffset]), strings.ToLower(needle))
+	if idx != -1 {
+		p := winStart + idx
+		if strings.TrimSpace(raw[p+len(needle):tr.StartOffset]) == "" {
+			nameIdx = p
+		}
+	}
+	if nameIdx == -1 {
+		return 0, 0, false
+	}
+
+	// Extend end past the trailing ';' (EndOffset already includes it when present).
+	end := tr.EndOffset
+
+	lineStart := lineStartPos(raw, nameIdx)
+	inline := strings.TrimSpace(raw[lineStart:nameIdx]) != ""
+
+	if inline {
+		// Property sits mid-line (e.g. Table FIELDS: "...;Code20 ;OnValidate=...END;").
+		// Keep the ';' that separated the previous property; consume whitespace/newline
+		// after END; so the next property (if any) glues back onto the same line.
+		start := nameIdx
+		cursor := end
+		for cursor < len(raw) && (raw[cursor] == ' ' || raw[cursor] == '\t' || raw[cursor] == '\r' || raw[cursor] == '\n') {
+			cursor++
+		}
+		if cursor < len(raw) && raw[cursor] == '}' {
+			// Do not pull the section closing brace onto the property line.
+			if nl := strings.LastIndexByte(raw[end:cursor], '\n'); nl >= 0 {
+				cursor = end + nl + 1
+			} else {
+				cursor = end
+			}
+		}
+		return start, cursor, true
+	}
+
+	// Whole-line property (PROPERTIES / ELEMENTS sections): remove the full lines.
+	start := lineStart
+	if end < len(raw) && raw[end] == '\n' {
+		end++
+	} else if end+1 < len(raw) && raw[end] == '\r' && raw[end+1] == '\n' {
+		end += 2
+	}
+	// Also swallow one trailing blank line that NAV exports put after triggers.
+	if rem := raw[end:]; strings.HasPrefix(rem, "\r\n") || strings.HasPrefix(rem, "\n") {
+		if nl := strings.IndexByte(rem, '\n'); nl >= 0 && strings.TrimSpace(rem[:nl+1]) == "" {
+			end += nl + 1
+		}
+	}
+	return start, end, true
+}

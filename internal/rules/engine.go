@@ -124,6 +124,16 @@ func ProcessWithScope(input []byte, cfg *config.Config, ws *objectfile.Workspace
 		}
 	}
 
+	// Pass 2b: task 6.2 - remove empty triggers (FIELDS/PROPERTIES/ELEMENTS) that are
+	// empty initially or became empty after CAL001; OnLookup and Codeunit OnRun are kept.
+	if cfg.IsRuleEnabled(config.RuleUnusedLocalVar) {
+		if err := runPass(func(obj *objectfile.ObjectFile) ([]objectfile.SpanEdit, []Diagnostic) {
+			return runEmptyTriggerRule(obj, cfg, fscope)
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	// Pass 3: CAL004 (local-textconst) - promote remaining (used) local TextConst declarations to global VAR.
 	if cfg.IsRuleEnabled(config.RuleLocalTextConst) {
 		if err := runPass(func(obj *objectfile.ObjectFile) ([]objectfile.SpanEdit, []Diagnostic) {

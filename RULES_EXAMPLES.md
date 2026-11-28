@@ -9,6 +9,7 @@
 | Правило | Что делает | Тест |
 |---|---|---|
 | [CAL001](#cal001) | Удаляет неиспользуемые локальные переменные и пустые `VAR`-блоки | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal001_unused_local/input/c50001%20-%20Unused%20Local%20Var.txt) / [expected](testdata/cases/cal001_unused_local/expected/c50001%20-%20Unused%20Local%20Var.txt) |
+| [Пункт 6.2](#task-6-2-empty-triggers) | Удаляет пустые триггеры (FIELDS/PROPERTIES/ELEMENTS), кроме `OnLookup` и `OnRun` Codeunit | [TestEmptyTriggerTableRemoval#L68](internal/rules/empty_trigger_test.go#L68), [input](testdata/cases/empty_trigger_cleanup/input/t50036%20-%20Empty%20Trig%20Table.txt) / [expected](testdata/cases/empty_trigger_cleanup/expected/t50036%20-%20Empty%20Trig%20Table.txt) |
 | [CAL002](#cal002) | Удаляет неиспользуемые глобальные переменные | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal002_unused_global/input/p50002%20-%20Unused%20Global%20Page.txt) / [expected](testdata/cases/cal002_unused_global/expected/p50002%20-%20Unused%20Global%20Page.txt) |
 | [CAL003](#cal003) | Неиспользуемый параметр — только warning, без правок | [TestDiagnosticWarnings#L124](internal/rules/rules_test.go#L124), [input](testdata/cases/cal003_unused_param/input/c50003%20-%20Unused%20Param.txt) / [expected](testdata/cases/cal003_unused_param/expected/c50003%20-%20Unused%20Param.txt) |
 | [CAL004](#cal004) | Локальные `TextConst` переносит в глобальный `VAR` | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal004_local_textconst/input/c50004%20-%20Local%20TextConst.txt) / [expected](testdata/cases/cal004_local_textconst/expected/c50004%20-%20Local%20TextConst.txt) |
@@ -57,6 +58,62 @@
 ```
 
 **Тест:** [input](testdata/cases/cal001_unused_local/input/c50001%20-%20Unused%20Local%20Var.txt) / [expected](testdata/cases/cal001_unused_local/expected/c50001%20-%20Unused%20Local%20Var.txt), триггер в таблице: [input](testdata/cases/all_rules_table/input/t50101%20-%20Custom%20Entry.txt), [TestGoldenCases](internal/rules/rules_test.go#L24)
+
+<a id="task-6-2-empty-triggers"></a>
+### Пункт 6.2 — удаление пустых триггеров (диагностики под CAL001)
+
+Проход `runEmptyTriggerRule` (Pass 2b, сразу после CAL001) удаляет свойство триггера целиком (`OnValidate=...;`, `OnPostXMLport=...;`) в секциях `FIELDS` (таблицы), `PROPERTIES` (таблица/page/report/xmlport) и `ELEMENTS` (XMLport), если в триггере нет исполняемого кода, комментариев и оставшихся объявлений переменных — изначально или после удаления неиспользуемых переменных правилом CAL001. **Исключения:** `OnLookup` никогда не удаляется (пустой `OnLookup` меняет поведение UI — появляется кнопка `...`) и `OnRun` в Codeunit. Инлайн-свойства в строке поля склеиваются с следующим атрибутом через сохранный `;`; в diff-режиме пустые триггеры удаляются только у полностью новых (ModeFull) триггеров.
+
+**Исходный код:**
+
+```cal
+  PROPERTIES
+  {
+    OnDelete=BEGIN                    // НАРУШЕНИЕ: пустой триггер - удалить свойство целиком (вместе с пустой строкой после END;)
+             END;
+
+    OnInsert=BEGIN                    // НЕ трогать: есть код
+               TotalL := 1;
+             END;
+
+    OnRename=BEGIN                    // НЕ трогать: есть только комментарий - триггер остаётся
+               // explanatory comment stays
+             END;
+
+    OnLookup=BEGIN                    // НЕ трогать: исключение OnLookup (кнопка ... в UI)
+             END;
+  }
+  FIELDS
+  {
+    { 1   ;   ;Entry No.           ;Integer        ;OnValidate=VAR
+                                                                  UnusedL@1000 : Integer;  // CAL001 удалит переменную -> триггер станет пустым
+                                                                BEGIN
+                                                                END;                        // НАРУШЕНИЕ: после CAL001 пустой - удалить свойство, CaptionML подтянется
+                                                    CaptionML=ENU=Entry No. }
+```
+
+**Исправленный код:**
+
+```cal
+  PROPERTIES
+  {
+    OnInsert=BEGIN
+               TotalL := 1;
+             END;
+
+    OnRename=BEGIN
+               // explanatory comment stays
+             END;
+
+    OnLookup=BEGIN
+             END;
+  }
+  FIELDS
+  {
+    { 1   ;   ;Entry No.           ;Integer        ;CaptionML=ENU=Entry No. }   // Исправлено: пустое свойство удалено, ';' разделитель сохранён
+```
+
+**Тест:** [TestEmptyTriggerTableRemoval](internal/rules/empty_trigger_test.go#L68), [TestEmptyTriggerCodeunitOnRunKept](internal/rules/empty_trigger_test.go#L104), [TestEmptyTriggerXMLportElements](internal/rules/empty_trigger_test.go#L134), [TestEmptyTriggerDiffModeKeepsUntouched](internal/rules/empty_trigger_test.go#L179), [TestEmptyTriggerRuleDisabledWithCAL001](internal/rules/empty_trigger_test.go#L193), golden: [input](testdata/cases/empty_trigger_cleanup/input/t50036%20-%20Empty%20Trig%20Table.txt) / [expected](testdata/cases/empty_trigger_cleanup/expected/t50036%20-%20Empty%20Trig%20Table.txt)
 
 <a id="cal002"></a>
 ### CAL002 — неиспользуемые глобальные переменные
