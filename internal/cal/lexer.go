@@ -259,6 +259,12 @@ func isIdentPartRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
+// IsIdentPartRune reports whether r may appear inside an unquoted C/AL identifier
+// (letter, digit or underscore).
+func IsIdentPartRune(r rune) bool {
+	return isIdentPartRune(r)
+}
+
 func isIdentPartByte(s string, idx int) bool {
 	if idx >= len(s) {
 		return false

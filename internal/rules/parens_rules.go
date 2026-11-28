@@ -3,6 +3,7 @@ package rules
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"prereviewcal/internal/cal"
 	"prereviewcal/internal/config"
@@ -343,15 +344,49 @@ func fixRedundantParensInBody(body string, us *diffscope.UnitScope, obj *objectf
 			Fixed:    true,
 		})
 
-		// Remove '(' at lpIdx and ')' at rpIdx.
+		// Remove '(' at lpIdx and ')' at rpIdx, but keep a space when plain removal
+		// would glue two identifiers/keywords/numbers (CAL021: "NOT(_Sales..." -> "NOT _Sales...").
 		edits := []textEdit{
-			{start: tokens[lpIdx].Start, end: tokens[lpIdx].End, newText: ""},
-			{start: tokens[rpIdx].Start, end: tokens[rpIdx].End, newText: ""},
+			{start: tokens[lpIdx].Start, end: tokens[lpIdx].End, newText: parenRemovalText(cur, tokens[lpIdx].Start, tokens[lpIdx].End)},
+			{start: tokens[rpIdx].Start, end: tokens[rpIdx].End, newText: parenRemovalText(cur, tokens[rpIdx].Start, tokens[rpIdx].End)},
 		}
 		cur = applyTextEdits(cur, edits)
 	}
 
 	return cur, diags
+}
+
+// parenRemovalText returns the replacement text for a removed '(' or ')'.
+// If deleting the bracket would glue two identifier/keyword/number characters
+// together (e.g. "NOT(" + "_Sales..." or "(FlagL" + ")THEN"), a single space
+// is inserted instead of an empty string (CAL021).
+func parenRemovalText(s string, start, end int) string {
+	if identPartRuneBefore(s, start) && identPartRuneAt(s, end) {
+		return " "
+	}
+	return ""
+}
+
+// identPartRuneBefore reports whether the rune ending right before idx is an identifier part.
+func identPartRuneBefore(s string, idx int) bool {
+	if idx <= 0 {
+		return false
+	}
+	i := idx - 1
+	for i > 0 && s[i]&0xC0 == 0x80 {
+		i--
+	}
+	r, _ := utf8.DecodeRuneInString(s[i:idx])
+	return cal.IsIdentPartRune(r)
+}
+
+// identPartRuneAt reports whether the rune starting at idx is an identifier part.
+func identPartRuneAt(s string, idx int) bool {
+	if idx < 0 || idx >= len(s) {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(s[idx:])
+	return cal.IsIdentPartRune(r)
 }
 
 func findRedundantParenPair(tokens []cal.Token, changedLines map[int]bool) (int, int, string) {
