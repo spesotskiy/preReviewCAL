@@ -155,6 +155,10 @@ func fixCallParensInBody(body string, scope *localScope, osym *objectSymbols, ch
 		if prev != -1 && tokens[prev].Kind == cal.TokDot {
 			// Qualified member access: Receiver.Name
 			recvIdx := cal.PrevCode(tokens, prev-1)
+			// DotNet/Automation/OCX members may be properties (e.g. .Count): never auto-add () (task 1.2).
+			if isInteropVarDecl(chainRootVar(tokens, recvIdx, scope)) {
+				continue
+			}
 			var recvVar *cal.VarDecl
 			recvName := ""
 			if recvIdx != -1 && (tokens[recvIdx].Kind == cal.TokIdent || tokens[recvIdx].Kind == cal.TokQuotedIdent) {
