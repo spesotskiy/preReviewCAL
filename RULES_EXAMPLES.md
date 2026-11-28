@@ -16,6 +16,7 @@
 | [CAL010](#cal010) | Суффикс `L` у локальных переменных; >30 символов — только warning | [TestDiagnosticWarnings#L168](internal/rules/rules_test.go#L168), [input](testdata/cases/cal010_local_suffix/input/c50010%20-%20Local%20Suffix.txt) / [expected](testdata/cases/cal010_local_suffix/expected/c50010%20-%20Local%20Suffix.txt) |
 | [CAL011](#cal011) | Суффикс `P` у параметров; `[EventSubscriber]` — только warning | [TestDiagnosticWarnings#L143](internal/rules/rules_test.go#L143), [input](testdata/cases/cal011_param_suffix/input/c50011%20-%20Param%20Suffix%20And%20EventSub.txt) / [expected](testdata/cases/cal011_param_suffix/expected/c50011%20-%20Param%20Suffix%20And%20EventSub.txt) |
 | [CAL012](#cal012) | Регистр идентификаторов по объявлению | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal012_identifier_casing/input/c50012%20-%20Identifier%20Casing.txt) / [expected](testdata/cases/cal012_identifier_casing/expected/c50012%20-%20Identifier%20Casing.txt) |
+| [CAL010+CAL011+CAL033](#cal010-011-033-builtin-conflict) | Конфликт имени с системной функцией: `+L`/`+P`/`+G` + warning (пункт 1.5) | [TestGlobalBuiltinConflictRename#L143](internal/rules/builtin_conflict_test.go#L143), [input](testdata/cases/builtin_name_conflict/input/c50024%20-%20Builtin%20Name%20Conflict.txt) / [expected](testdata/cases/builtin_name_conflict/expected/c50024%20-%20Builtin%20Name%20Conflict.txt) |
 | [CAL020](#cal020) | `()` к вызовам без аргументов; [EXIT](#cal020-exit) | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal020_call_parens/input/c50020%20-%20Call%20Parens.txt) / [expected](testdata/cases/cal020_call_parens/expected/c50020%20-%20Call%20Parens.txt) |
 | [CAL021](#cal021) | Удаляет избыточные скобки; [без склейки токенов](#cal021-glue) | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal021_redundant_parens/input/c50021%20-%20Redundant%20Parens.txt) / [expected](testdata/cases/cal021_redundant_parens/expected/c50021%20-%20Redundant%20Parens.txt) |
 | [CAL020+CAL033](#cal020-cal033-dotnet) | Защита членов DotNet/Automation/OCX (пункт 1.2) | [TestKeywordCasingDotNetGuard#L25](internal/rules/dotnet_guard_test.go#L25), [input](testdata/cases/dotnet_member_guard/input/c50022%20-%20DotNet%20Guard.txt) / [expected](testdata/cases/dotnet_member_guard/expected/c50022%20-%20DotNet%20Guard.txt) |
@@ -228,6 +229,51 @@
 ```
 
 **Тест:** [input](testdata/cases/cal012_identifier_casing/input/c50012%20-%20Identifier%20Casing.txt) / [expected](testdata/cases/cal012_identifier_casing/expected/c50012%20-%20Identifier%20Casing.txt), [TestGoldenCases](internal/rules/rules_test.go#L24)
+
+<a id="cal010-011-033-builtin-conflict"></a>
+### CAL010 + CAL011 + CAL033 — конфликт имени переменной с системной функцией (пункт 1.5)
+
+Имя переменной, совпадающее с системной функцией (`Time` vs `TIME()`), переименовывается **только при коллизии**: локальная переменная / Return Value -> `+L`, параметр -> `+P`, глобальная переменная -> `+G`, всегда с `warning`. CAL033 никогда не переводит в UPPERCASE объявленные переменные/параметры/Return Value и левую часть `:=`; ссылки на встроенную функцию в точном UPPERCASE (`WORKDATE`) при переименовании не затрагиваются. Без коллизии суффиксы `L/G` не добавляются, Return Value и глобальные переменные не трогаются.
+
+**Исходный код:**
+
+```cal
+    VAR
+      WorkDate@1000 : Date;                     // НАРУШЕНИЕ: коллизия с системной функцией WORKDATE() -> переименовать в WorkDateG
+
+    PROCEDURE GetValueAsTime@1(Value@1000 : DateTime) Time : Time;
+                                                // НАРУШЕНИЕ: параметр без P; Return Value 'Time' коллизируют с TIME()
+    VAR
+      Counter@1001 : Integer;                   // НАРУШЕНИЕ: локальная без L (не builtin, обычный путь CAL010)
+    BEGIN
+      Time := DT2TIME(Value);                   // НАРУШЕНИЕ: до фикса превращалось в "TIME := ..." (CAL033)
+      WorkDate := WORKDATE;                     // глобальная ссылка -> WorkDateG; сама WORKDATE — НЕ трогать (builtin)
+      Counter := 1;
+      MESSAGE('%1 %2', Time, Counter);
+    END;
+```
+
+**Исправленный код:**
+
+```cal
+    VAR
+      WorkDateG@1000 : Date;                    // Исправлено: +G из-за коллизии с WORKDATE() (warning)
+
+    PROCEDURE GetValueAsTime@1(ValueP@1000 : DateTime) TimeL : Time;
+                                                // Исправлено: Value -> ValueP (CAL011); Return Value Time -> TimeL (коллизия, warning); тип Time НЕ трогать
+    VAR
+      CounterL@1001 : Integer;                  // Исправлено: обычный суффикс L (без warning коллизии)
+    BEGIN
+      TimeL := DT2TIME(ValueP);                 // Исправлено: ссылка переименована; TIME := не возникло (CAL033 guard)
+      WorkDateG := WORKDATE();                  // Исправлено: глобал -> WorkDateG; builtin WORKDATE сохранён и получил () от CAL020
+      CounterL := 1;
+      MESSAGE('%1 %2', TimeL, CounterL);
+    END;
+```
+
+Case с тенью: глобальная `WorkDate` **не** переименовывается (только warning), если локальная/параметр с тем же именем перекрывает её в какой-либо процедуре.
+
+**Тест:** [TestKeywordCasingDeclaredNameGuard](internal/rules/builtin_conflict_test.go#L23), [TestReturnVarBuiltinConflictRename](internal/rules/builtin_conflict_test.go#L99), [TestGlobalBuiltinConflictRename](internal/rules/builtin_conflict_test.go#L143), [TestGlobalBuiltinConflictShadowedWarnsOnly](internal/rules/builtin_conflict_test.go#L199), [TestReturnVarBuiltinConflictCollisionWarnsOnly](internal/rules/builtin_conflict_test.go#L250), golden: [input](testdata/cases/builtin_name_conflict/input/c50024%20-%20Builtin%20Name%20Conflict.txt) / [expected](testdata/cases/builtin_name_conflict/expected/c50024%20-%20Builtin%20Name%20Conflict.txt)
 
 ---
 
