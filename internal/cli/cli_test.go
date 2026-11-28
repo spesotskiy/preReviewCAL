@@ -38,9 +38,26 @@ func TestCLIFixCheckAndDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1. check returns exit code 1 on dirty file.
+	// Config with CAL005 disabled: --symbols-dir must not be required.
+	noWithOffCfg := filepath.Join(tmp, "no-with-off.json")
+	if err := os.WriteFile(noWithOffCfg, []byte(`{"rules":{"CAL005":{"enabled":false}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 0. Task 1.3: without --symbols-dir (and without config symbolsDir) CAL005 must refuse to run.
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"check", targetFile}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("check without --symbols-dir exit code = %d, want 2 (stderr=%s)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--symbols-dir is required") {
+		t.Fatalf("expected clear --symbols-dir error, got stderr=%s", stderr.String())
+	}
+
+	// 1. check returns exit code 1 on dirty file.
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"check", "--symbols-dir", tmp, targetFile}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("check exit code = %d, want 1 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
 	}
@@ -48,7 +65,7 @@ func TestCLIFixCheckAndDiff(t *testing.T) {
 	// 2. fix --diff prints unified diff without modifying file.
 	stdout.Reset()
 	stderr.Reset()
-	code = Run([]string{"fix", "--diff", targetFile}, &stdout, &stderr)
+	code = Run([]string{"fix", "--symbols-dir", tmp, "--diff", targetFile}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("fix --diff exit code = %d, want 0 (stderr=%s)", code, stderr.String())
 	}
@@ -63,7 +80,7 @@ func TestCLIFixCheckAndDiff(t *testing.T) {
 	// 3. fix updates file on disk to match expected.
 	stdout.Reset()
 	stderr.Reset()
-	code = Run([]string{"fix", targetFile}, &stdout, &stderr)
+	code = Run([]string{"fix", "--symbols-dir", tmp, targetFile}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("fix exit code = %d, want 0 (stderr=%s)", code, stderr.String())
 	}
@@ -75,8 +92,16 @@ func TestCLIFixCheckAndDiff(t *testing.T) {
 	// 4. check now returns exit code 0!
 	stdout.Reset()
 	stderr.Reset()
-	code = Run([]string{"check", targetFile}, &stdout, &stderr)
+	code = Run([]string{"check", "--symbols-dir", tmp, targetFile}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("check after fix exit code = %d, want 0 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
+	}
+
+	// 5. CAL005 disabled in config: running WITHOUT --symbols-dir is allowed again.
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"check", "--config", noWithOffCfg, targetFile}, &stdout, &stderr)
+	if code == 2 {
+		t.Fatalf("with CAL005 disabled, missing --symbols-dir must not abort (stderr=%s)", stderr.String())
 	}
 }

@@ -228,6 +228,10 @@ var GlobalBuiltins = map[string]bool{
 	"SYSTEM": true, "TASKSCHEDULER": true, "TEMPORARYPATH": true, "TIME": true,
 	"TODAY": true, "UPLOAD": true, "UPLOADINTOSTREAM": true, "UPPERCASE": true,
 	"USERID": true, "WORKDATE": true, "XMLPORT": true, "XREC": true, "YIELD": true,
+	// NAV 2017 system Option/enum type names: never prefixed before '::' (task 1.3).
+	"ACTION": true, "DATATYPE": true, "DATEORDER": true, "EXECUTIONMODE": true,
+	"FORM": true, "REPORTFORMAT": true, "SECURITYFILTER": true,
+	"TESTPERMISSIONS": true, "TEXTENCODING": true, "TRANSACTIONTYPE": true,
 }
 
 // SystemTriggerNames lists platform/system procedure/trigger names whose parameters must not be renamed by CAL011.

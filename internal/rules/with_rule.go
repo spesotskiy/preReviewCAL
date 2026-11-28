@@ -108,104 +108,153 @@ func eliminateWithInBody(body string, scope *localScope, osym *objectSymbols, ob
 	cur := body
 
 	// Iteratively eliminate innermost eligible WITH blocks first so nested WITH resolves accurately!
+	// Task 1.3: a WITH block is eliminated ONLY when its target resolves to a schema from
+	// --symbols-dir (or the object itself) and every identifier in the block is classified
+	// (field / record method / public procedure / known variable / builtin). Otherwise the
+	// block is left untouched and a warning is emitted.
 	for {
 		tokens := cal.Lex(cur)
 		var changedLines map[int]bool
 		if us != nil && us.Mode == diffscope.ModePartial {
 			changedLines = us.ChangedBodyLines(cur)
 		}
-		withIdx := findInnermostEligibleWith(tokens, changedLines)
-		if withIdx == -1 {
+		cands := findAllEligibleWiths(tokens, changedLines)
+		if len(cands) == 0 {
 			break
 		}
 
-		// Find matching DO keyword.
-		doIdx := findDoAfterWith(tokens, withIdx)
-		if doIdx == -1 {
-			break
-		}
-
-		recExpr := strings.TrimSpace(cur[tokens[withIdx].End:tokens[doIdx].Start])
-		if recExpr == "" {
-			break
-		}
-
-		// Resolve table schema if available via WorkspaceIndex.
-		var tableSchema *objectfile.TableSchema
-		recKey := strings.ToLower(strings.Trim(recExpr, `"`))
-		if recKey == "rec" || recKey == "xrec" {
-			if obj.SourceTable > 0 && ws != nil {
-				tableSchema = ws.LookupTable(obj.SourceTable)
+		progress := false
+		var skipDiags []Diagnostic
+		for _, withIdx := range cands { // innermost first
+			doIdx := findDoAfterWith(tokens, withIdx)
+			if doIdx == -1 {
+				continue
 			}
-		} else if vd, ok := scope.vars[recKey]; ok && strings.EqualFold(vd.BaseType, "Record") && vd.SubtypeID > 0 {
-			if ws != nil {
-				tableSchema = ws.LookupTable(vd.SubtypeID)
+			recExpr := strings.TrimSpace(cur[tokens[withIdx].End:tokens[doIdx].Start])
+			if recExpr == "" {
+				continue
 			}
-		} else if tblID, ok := osym.dataItems[recKey]; ok && tblID > 0 {
-			if ws != nil {
-				tableSchema = ws.LookupTable(tblID)
+			stmtStartIdx := cal.NextCode(tokens, doIdx+1)
+			if stmtStartIdx == -1 {
+				continue
 			}
-		}
+			lineNum := obj.LineOfOffset(baseFileOffset + tokens[withIdx].Start)
 
-		stmtStartIdx := cal.NextCode(tokens, doIdx+1)
-		if stmtStartIdx == -1 {
-			break
-		}
+			prevBeforeWith := cal.PrevCode(tokens, withIdx-1)
+			inSingleStmtSlot := prevBeforeWith != -1 && (tokens[prevBeforeWith].IsWord("THEN") ||
+				tokens[prevBeforeWith].IsWord("ELSE") ||
+				tokens[prevBeforeWith].IsWord("DO"))
 
-		prevBeforeWith := cal.PrevCode(tokens, withIdx-1)
-		inSingleStmtSlot := prevBeforeWith != -1 && (tokens[prevBeforeWith].IsWord("THEN") ||
-			tokens[prevBeforeWith].IsWord("ELSE") ||
-			tokens[prevBeforeWith].IsWord("DO"))
-
-		lineNum := obj.LineOfOffset(baseFileOffset + tokens[withIdx].Start)
-
-		if tokens[stmtStartIdx].IsWord("BEGIN") {
-			endIdx := findMatchingEndToken(tokens, stmtStartIdx)
-			if endIdx == -1 {
-				break
-			}
-			// Determine trailing semicolon after END.
-			endStop := tokens[endIdx].End
-			afterEnd := cal.NextCode(tokens, endIdx+1)
-			hasSemi := afterEnd != -1 && tokens[afterEnd].Kind == cal.TokSemi
-			if hasSemi {
-				endStop = tokens[afterEnd].End
-			}
-
-			// Prefix identifiers strictly inside BEGIN ... END.
-			innerStart := tokens[stmtStartIdx].End
-			innerEnd := tokens[endIdx].Start
-			prefixedInner := prefixWithIdentifiers(cur[innerStart:innerEnd], recExpr, scope, osym, tableSchema)
-
-			if inSingleStmtSlot {
-				// Keep BEGIN ... END[;] because WITH was the body of IF/ELSE/FOR/WHILE!
-				// Replace only "WITH <recExpr> DO" + whitespace before BEGIN.
-				var b strings.Builder
-				b.WriteString(cur[:tokens[withIdx].Start])
-				b.WriteString(cur[tokens[stmtStartIdx].Start:innerStart])
-				b.WriteString(prefixedInner)
-				b.WriteString(cur[innerEnd:])
-				cur = b.String()
+			var beginIdx, endIdx, endStop, fragStart, fragEnd int
+			var isBeginBlock bool
+			if tokens[stmtStartIdx].IsWord("BEGIN") {
+				endIdx = findMatchingEndToken(tokens, stmtStartIdx)
+				if endIdx == -1 {
+					continue
+				}
+				beginIdx = stmtStartIdx
+				isBeginBlock = true
+				endStop = tokens[endIdx].End
+				afterEnd := cal.NextCode(tokens, endIdx+1)
+				if afterEnd != -1 && tokens[afterEnd].Kind == cal.TokSemi {
+					endStop = tokens[afterEnd].End
+				}
+				fragStart = tokens[beginIdx].End
+				fragEnd = tokens[endIdx].Start
 			} else {
-				// Unwrap WITH ... DO BEGIN ... END;
-				// Strip leading newline after BEGIN and trailing indentation before END, and dedent body lines by indentSize.
-				unwrapped := unwrapWithBeginBody(prefixedInner, eol, indentSize)
+				endIdx = findSingleStatementEnd(tokens, stmtStartIdx)
+				if endIdx == -1 {
+					continue
+				}
+				endStop = tokens[endIdx].End
+				fragStart = tokens[stmtStartIdx].Start
+				fragEnd = tokens[endIdx].End
+			}
+
+			// A still-unresolved inner WITH inside this block (e.g. skipped because its
+			// schema is unknown) makes prefixing unsafe -> skip this block too.
+			if containsWithKeyword(tokens, doIdx, endIdx) {
+				skipDiags = append(skipDiags, Diagnostic{
+					Rule:     config.RuleNoWith,
+					Severity: SeverityWarning,
+					Line:     lineNum,
+					Message:  fmt.Sprintf("WITH %s DO not expanded: it contains an inner WITH block that could not be eliminated", recExpr),
+					Fixed:    false,
+				})
+				continue
+			}
+
+			schema := resolveWithSchema(recExpr, scope, osym, obj, ws)
+			if schema == nil {
+				skipDiags = append(skipDiags, Diagnostic{
+					Rule:     config.RuleNoWith,
+					Severity: SeverityWarning,
+					Line:     lineNum,
+					Message:  fmt.Sprintf("WITH %s DO not expanded: schema of the target object was not found in --symbols-dir", recExpr),
+					Fixed:    false,
+				})
+				continue
+			}
+
+			prefixed, unknowns := prefixWithIdentifiers(cur[fragStart:fragEnd], recExpr, scope, osym, schema)
+			if len(unknowns) > 0 {
+				quoted := make([]string, len(unknowns))
+				for k, u := range unknowns {
+					quoted[k] = "'" + u + "'"
+				}
+				skipDiags = append(skipDiags, Diagnostic{
+					Rule:     config.RuleNoWith,
+					Severity: SeverityWarning,
+					Line:     lineNum,
+					Message: fmt.Sprintf("WITH %s DO not expanded: %s not found in schema of %s %d (--symbols-dir)",
+						recExpr, strings.Join(quoted, ", "), schema.ObjectType, schema.TableID),
+					Fixed: false,
+				})
+				continue
+			}
+
+			if isBeginBlock {
+				if inSingleStmtSlot {
+					// Keep BEGIN ... END[;] because WITH was the body of IF/ELSE/FOR/WHILE!
+					// Replace only "WITH <recExpr> DO" + whitespace before BEGIN.
+					var b strings.Builder
+					b.WriteString(cur[:tokens[withIdx].Start])
+					b.WriteString(cur[tokens[beginIdx].Start:fragStart])
+					b.WriteString(prefixed)
+					b.WriteString(cur[fragEnd:])
+					cur = b.String()
+				} else {
+					// Unwrap WITH ... DO BEGIN ... END;
+					unwrapped := unwrapWithBeginBody(prefixed, eol, indentSize)
+					withLineStart := lineStartPos(cur, tokens[withIdx].Start)
+					endLineEnd := lineEndPos(cur, endStop)
+
+					// Preserve leading indentation/comments before WITH if WITH wasn't first on line.
+					prefix := cur[:withLineStart]
+					if strings.TrimSpace(cur[withLineStart:tokens[withIdx].Start]) != "" {
+						prefix = cur[:tokens[withIdx].Start]
+					}
+					// Check if trailing text after END; on the same line exists (e.g. inline comment).
+					trailingOnEndLine := strings.TrimSpace(cur[endStop:endLineEnd])
+					suffix := cur[endLineEnd:]
+					if trailingOnEndLine != "" {
+						suffix = cur[endStop:]
+					}
+
+					cur = prefix + unwrapped + suffix
+				}
+			} else {
+				// Single-statement WITH <RecExpr> DO <Stmt>;
+				// Preserve indent of WITH line if statement was on the next line.
 				withLineStart := lineStartPos(cur, tokens[withIdx].Start)
-				endLineEnd := lineEndPos(cur, endStop)
-
-				// Preserve leading indentation/comments before WITH if WITH wasn't first on line.
-				prefix := cur[:withLineStart]
-				if strings.TrimSpace(cur[withLineStart:tokens[withIdx].Start]) != "" {
-					prefix = cur[:tokens[withIdx].Start]
+				withIndent := cur[withLineStart:tokens[withIdx].Start]
+				if strings.TrimSpace(withIndent) != "" {
+					// WITH was inline (e.g. "IF x THEN WITH r DO ...") -> replace from WITH to stmt start.
+					cur = cur[:tokens[withIdx].Start] + prefixed + cur[fragEnd:]
+				} else {
+					// WITH was at start of line -> replace "WITH ... DO [newline+indent]" with withIndent + prefixedStmt
+					cur = cur[:withLineStart] + withIndent + prefixed + cur[fragEnd:]
 				}
-				// Check if trailing text after END; on the same line exists (e.g. inline comment).
-				trailingOnEndLine := strings.TrimSpace(cur[endStop:endLineEnd])
-				suffix := cur[endLineEnd:]
-				if trailingOnEndLine != "" {
-					suffix = cur[endStop:]
-				}
-
-				cur = prefix + unwrapped + suffix
 			}
 
 			diags = append(diags, Diagnostic{
@@ -215,49 +264,82 @@ func eliminateWithInBody(body string, scope *localScope, osym *objectSymbols, ob
 				Message:  fmt.Sprintf("replaced WITH %s DO with explicit %s. qualifiers", recExpr, recExpr),
 				Fixed:    true,
 			})
-		} else {
-			// Single-statement WITH <RecExpr> DO <Stmt>;
-			stmtEndIdx := findSingleStatementEnd(tokens, stmtStartIdx)
-			if stmtEndIdx == -1 {
-				break
-			}
-			stmtStartByte := tokens[stmtStartIdx].Start
-			stmtEndByte := tokens[stmtEndIdx].End
-			prefixedStmt := prefixWithIdentifiers(cur[stmtStartByte:stmtEndByte], recExpr, scope, osym, tableSchema)
+			progress = true
+			break // restart: offsets changed
+		}
 
-			// Preserve indent of WITH line if statement was on the next line.
-			withLineStart := lineStartPos(cur, tokens[withIdx].Start)
-			withIndent := cur[withLineStart:tokens[withIdx].Start]
-			if strings.TrimSpace(withIndent) != "" {
-				// WITH was inline (e.g. "IF x THEN WITH r DO ...") -> replace from WITH to stmtStart with single space or empty.
-				cur = cur[:tokens[withIdx].Start] + prefixedStmt + cur[stmtEndByte:]
-			} else {
-				// WITH was at start of line -> replace "WITH ... DO [newline+indent]" with withIndent + prefixedStmt
-				cur = cur[:withLineStart] + withIndent + prefixedStmt + cur[stmtEndByte:]
-			}
-
-			diags = append(diags, Diagnostic{
-				Rule:     config.RuleNoWith,
-				Severity: SeverityInfo,
-				Line:     lineNum,
-				Message:  fmt.Sprintf("replaced WITH %s DO with explicit %s. qualifiers", recExpr, recExpr),
-				Fixed:    true,
-			})
+		if !progress {
+			diags = append(diags, skipDiags...)
+			break
 		}
 	}
 
 	return cur, diags
 }
 
-// findInnermostEligibleWith returns the token index of the LAST (innermost) WITH keyword
-// that is eligible for elimination (all WITH in full mode; only fully newly-added WITH in partial mode).
-func findInnermostEligibleWith(tokens []cal.Token, changedLines map[int]bool) int {
+// resolveWithSchema resolves the WITH target to an object schema from the
+// WorkspaceIndex (or from the object being processed itself, for implicit Rec
+// inside its own Table). Returns nil when the schema is unavailable (task 1.3).
+func resolveWithSchema(recExpr string, scope *localScope, osym *objectSymbols, obj *objectfile.ObjectFile, ws *objectfile.WorkspaceIndex) *objectfile.TableSchema {
+	recKey := strings.ToLower(strings.Trim(recExpr, `"`))
+	if recKey == "rec" || recKey == "xrec" {
+		if obj.SourceTable > 0 {
+			if ws != nil {
+				if ts := ws.LookupTable(obj.SourceTable); ts != nil {
+					return ts
+				}
+			}
+			// Processing the table object itself: its fields/procedures are known directly.
+			if strings.EqualFold(obj.ObjectType, "Table") && obj.ObjectID == obj.SourceTable {
+				return objectfile.SchemaFromObject(obj)
+			}
+		}
+		return nil
+	}
+	if vd, ok := scope.vars[recKey]; ok && vd.SubtypeID > 0 && strings.EqualFold(vd.BaseType, "Record") {
+		if ws != nil {
+			return ws.LookupObject("Table", vd.SubtypeID)
+		}
+		return nil
+	}
+	if vd, ok := scope.vars[recKey]; ok && vd.SubtypeID > 0 {
+		switch vd.BaseType {
+		case "Codeunit", "Page", "Report", "Query", "XMLport", "Port":
+			if ws != nil {
+				return ws.LookupObject(vd.BaseType, vd.SubtypeID)
+			}
+			return nil
+		}
+	}
+	if tblID, ok := osym.dataItems[recKey]; ok && tblID > 0 {
+		if ws != nil {
+			return ws.LookupTable(tblID)
+		}
+	}
+	return nil
+}
+
+// containsWithKeyword reports whether an unqualified WITH keyword occurs between
+// tokens (from, to] — i.e. an inner WITH block is still present in the block body.
+func containsWithKeyword(tokens []cal.Token, from, to int) bool {
+	for i := from + 1; i <= to && i < len(tokens); i++ {
+		if tokens[i].IsWord("WITH") && !isMemberAccess(tokens, i) {
+			return true
+		}
+	}
+	return false
+}
+
+// findAllEligibleWiths returns eligible WITH keyword token indices, innermost (last) first.
+func findAllEligibleWiths(tokens []cal.Token, changedLines map[int]bool) []int {
+	var res []int
 	for i := len(tokens) - 1; i >= 0; i-- {
 		if !tokens[i].IsWord("WITH") || isMemberAccess(tokens, i) {
 			continue
 		}
 		if changedLines == nil {
-			return i
+			res = append(res, i)
+			continue
 		}
 		// In ModePartial: the WITH header must be on a new/changed line.
 		if !changedLines[tokens[i].Line] {
@@ -293,9 +375,9 @@ func findInnermostEligibleWith(tokens []cal.Token, changedLines map[int]bool) in
 				continue
 			}
 		}
-		return i
+		res = append(res, i)
 	}
-	return -1
+	return res
 }
 
 func findDoAfterWith(tokens []cal.Token, withIdx int) int {
@@ -400,9 +482,15 @@ type callArgFrame struct {
 	argIndex     int
 }
 
-func prefixWithIdentifiers(fragment string, recExpr string, scope *localScope, osym *objectSymbols, tableSchema *objectfile.TableSchema) string {
+// prefixWithIdentifiers prefixes field/method references that belong to the WITH
+// target with recExpr. Strict mode (task 1.3): it NEVER guesses — every identifier
+// that is not a known variable/procedure/builtin/record method must be present in
+// the resolved object schema (fields or public procedures). Unresolvable names are
+// returned as "unknowns" so the caller can refuse the WITH elimination.
+func prefixWithIdentifiers(fragment string, recExpr string, scope *localScope, osym *objectSymbols, tableSchema *objectfile.TableSchema) (string, []string) {
 	tokens := cal.Lex(fragment)
 	var edits []textEdit
+	var unknowns []string
 	var callStack []callArgFrame
 
 	for i, tok := range tokens {
@@ -459,9 +547,14 @@ func prefixWithIdentifiers(fragment string, recExpr string, scope *localScope, o
 			continue
 		}
 
+		// Never prefix an enum qualifier: ACTION::LookupOK, DATATYPE::Text, ... (task 1.3).
+		if next := cal.NextCode(tokens, i+1); next != -1 && tokens[next].Kind == cal.TokScope {
+			continue
+		}
+
 		shouldPrefix := false
 
-		// 1. If we know the exact table schema from WorkspaceIndex, a matching table field is ALWAYS prefixed!
+		// 1. Known table field from the resolved schema is ALWAYS prefixed.
 		if tableSchema != nil && tableSchema.HasField(name) {
 			shouldPrefix = true
 		} else if cal.IsRecordMethod(name) {
@@ -471,16 +564,21 @@ func prefixWithIdentifiers(fragment string, recExpr string, scope *localScope, o
 				shouldPrefix = true
 			}
 		} else {
-			// 3. Not in known table schema and not a record method:
-			// Check if it is a known local/global variable, parameter, return var, DataItem, procedure, or global builtin.
+			// 3. Known variable, own-object procedure, DataItem or global builtin: never prefix.
 			_, isVar := scope.vars[lower]
 			_, isProc := osym.procs[lower]
 			_, isDataItem := osym.dataItems[lower]
 			isBuiltin := cal.IsGlobalBuiltin(name)
 
-			if !isVar && !isProc && !isDataItem && !isBuiltin {
-				// Unresolved identifier inside WITH -> belongs to the WITH record!
+			switch {
+			case isVar || isProc || isDataItem || isBuiltin:
+				// leave unqualified
+			case tableSchema != nil && tableSchema.HasProc(name):
+				// 4. Public procedure of the WITH target object (task 1.3): prefix it.
 				shouldPrefix = true
+			default:
+				// 5. Unresolvable name -> strict mode: refuse elimination for this block.
+				unknowns = append(unknowns, name)
 			}
 		}
 
@@ -493,7 +591,7 @@ func prefixWithIdentifiers(fragment string, recExpr string, scope *localScope, o
 		}
 	}
 
-	return applyTextEdits(fragment, edits)
+	return applyTextEdits(fragment, edits), unknowns
 }
 
 func unwrapWithBeginBody(inner string, eol string, indentSize int) string {

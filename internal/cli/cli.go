@@ -45,7 +45,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Flags:")
 	fmt.Fprintln(w, "  --config <path>             Path to .prereviewcal.json configuration file")
 	fmt.Fprintln(w, "  --diff                      Print unified diff (with 'fix', dry-run without writing files)")
-	fmt.Fprintln(w, "  --symbols-dir <dir>         Directory with NAV Table .txt files for WITH field resolution")
+	fmt.Fprintln(w, "  --symbols-dir <dir>         Directory with NAV object .txt files (schemas for WITH/CAL005);")
+	fmt.Fprintln(w, "                              REQUIRED when rule CAL005 is enabled (or set \"symbolsDir\" in config)")
 	fmt.Fprintln(w, "  --verbose                   Print all applied fixes in addition to warnings")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Git Diff Scope Flags:")
@@ -111,20 +112,34 @@ func runCommand(cmd string, args []string, stdout, stderr io.Writer) int {
 		cfg.Diff.MaxOldFunctionLines = *maxOldFuncLines
 	}
 
+	// Task 1.3: --symbols-dir (or config "symbolsDir") is strictly required when CAL005 is enabled.
+	symDir := *symbolsDir
+	if symDir == "" {
+		symDir = cfg.SymbolsDir
+	}
+	if cfg.IsRuleEnabled(config.RuleNoWith) && symDir == "" {
+		fmt.Fprintln(stderr, "error: --symbols-dir is required when rule CAL005 (no-with) is enabled: WITH elimination needs trusted table/object schemas. Pass --symbols-dir <dir> with NAV object .txt files (or set \"symbolsDir\" in .prereviewcal.json, or disable CAL005).")
+		return 2
+	}
+	if info, statErr := os.Stat(symDir); symDir != "" && (statErr != nil || !info.IsDir()) {
+		fmt.Fprintf(stderr, "error: --symbols-dir %q is not a directory\n", symDir)
+		return 2
+	}
+
 	if isGitMode {
 		return runGitDiffMode(cmd, cfg, gitRunParams{
 			staged:     *staged,
 			gitBase:    *gitBase,
 			gitHead:    *gitHead,
 			repoDir:    *repoDir,
-			symbolsDir: *symbolsDir,
+			symbolsDir: symDir,
 			showDiff:   *showDiff,
 			verbose:    *verbose,
 			targets:    targets,
 		}, stdout, stderr)
 	}
 
-	return runFullFileMode(cmd, cfg, *symbolsDir, *showDiff, *verbose, targets, stdout, stderr)
+	return runFullFileMode(cmd, cfg, symDir, *showDiff, *verbose, targets, stdout, stderr)
 }
 
 type gitRunParams struct {
@@ -161,7 +176,7 @@ func runGitDiffMode(cmd string, cfg *config.Config, p gitRunParams, stdout, stde
 	}
 
 	readStagedBlob := cmd == "check" && opts.Mode == gitdiff.ModeStaged
-	targetFiles, repoRoot, err := gitdiff.CollectTargets(opts, p.targets, readStagedBlob)
+	targetFiles, _, err := gitdiff.CollectTargets(opts, p.targets, readStagedBlob)
 	if err != nil {
 		fmt.Fprintf(stderr, "git diff error: %v\n", err)
 		return 2
@@ -170,11 +185,7 @@ func runGitDiffMode(cmd string, cfg *config.Config, p gitRunParams, stdout, stde
 		return 0
 	}
 
-	symDir := p.symbolsDir
-	if symDir == "" {
-		symDir = repoRoot
-	}
-	ws := objectfile.NewWorkspaceIndex(symDir, cfg.FileNaming)
+	ws := objectfile.NewWorkspaceIndex(p.symbolsDir, cfg.FileNaming)
 
 	changedCount := 0
 	warningCount := 0
@@ -235,16 +246,7 @@ func runFullFileMode(cmd string, cfg *config.Config, symbolsDir string, showDiff
 		return 0
 	}
 
-	symDir := symbolsDir
-	if symDir == "" {
-		info, statErr := os.Stat(targets[0])
-		if statErr == nil && info.IsDir() {
-			symDir = targets[0]
-		} else {
-			symDir = filepath.Dir(targets[0])
-		}
-	}
-	ws := objectfile.NewWorkspaceIndex(symDir, cfg.FileNaming)
+	ws := objectfile.NewWorkspaceIndex(symbolsDir, cfg.FileNaming)
 
 	changedCount := 0
 	warningCount := 0
@@ -364,3 +366,4 @@ func collectTxtFiles(targets []string) ([]string, error) {
 	}
 	return files, nil
 }
+

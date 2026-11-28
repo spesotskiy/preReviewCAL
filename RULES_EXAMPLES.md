@@ -12,7 +12,7 @@
 | [CAL002](#cal002) | Удаляет неиспользуемые глобальные переменные | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal002_unused_global/input/p50002%20-%20Unused%20Global%20Page.txt) / [expected](testdata/cases/cal002_unused_global/expected/p50002%20-%20Unused%20Global%20Page.txt) |
 | [CAL003](#cal003) | Неиспользуемый параметр — только warning, без правок | [TestDiagnosticWarnings#L124](internal/rules/rules_test.go#L124), [input](testdata/cases/cal003_unused_param/input/c50003%20-%20Unused%20Param.txt) / [expected](testdata/cases/cal003_unused_param/expected/c50003%20-%20Unused%20Param.txt) |
 | [CAL004](#cal004) | Локальные `TextConst` переносит в глобальный `VAR` | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal004_local_textconst/input/c50004%20-%20Local%20TextConst.txt) / [expected](testdata/cases/cal004_local_textconst/expected/c50004%20-%20Local%20TextConst.txt) |
-| [CAL005](#cal005) | Удаляет `WITH ... DO`, квалифицирует все ссылки | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal005_no_with/input/c50005%20-%20No%20With.txt) / [expected](testdata/cases/cal005_no_with/expected/c50005%20-%20No%20With.txt) |
+| [CAL005](#cal005) | Удаляет `WITH ... DO`, квалифицирует все ссылки; [строгая схема + обязательный `--symbols-dir`](#cal005-strict) | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal005_no_with/input/c50005%20-%20No%20With.txt) / [expected](testdata/cases/cal005_no_with/expected/c50005%20-%20No%20With.txt) |
 | [CAL010](#cal010) | Суффикс `L` у локальных переменных; >30 символов — только warning | [TestDiagnosticWarnings#L168](internal/rules/rules_test.go#L168), [input](testdata/cases/cal010_local_suffix/input/c50010%20-%20Local%20Suffix.txt) / [expected](testdata/cases/cal010_local_suffix/expected/c50010%20-%20Local%20Suffix.txt) |
 | [CAL011](#cal011) | Суффикс `P` у параметров; `[EventSubscriber]` — только warning | [TestDiagnosticWarnings#L143](internal/rules/rules_test.go#L143), [input](testdata/cases/cal011_param_suffix/input/c50011%20-%20Param%20Suffix%20And%20EventSub.txt) / [expected](testdata/cases/cal011_param_suffix/expected/c50011%20-%20Param%20Suffix%20And%20EventSub.txt) |
 | [CAL012](#cal012) | Регистр идентификаторов по объявлению | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal012_identifier_casing/input/c50012%20-%20Identifier%20Casing.txt) / [expected](testdata/cases/cal012_identifier_casing/expected/c50012%20-%20Identifier%20Casing.txt) |
@@ -151,6 +151,61 @@
 ```
 
 **Тест:** [input](testdata/cases/cal005_no_with/input/c50005%20-%20No%20With.txt) / [expected](testdata/cases/cal005_no_with/expected/c50005%20-%20No%20With.txt), [TestGoldenCases](internal/rules/rules_test.go#L24)
+
+<a id="cal005-strict"></a>
+### CAL005 — строгая анализ схемы + обязательный `--symbols-dir` (пункт 1.3)
+
+С 1.3 CAL005 работает строго: CLI отказывается запускаться без `--symbols-dir` (или `symbolsDir` в конфиге) при включённом CAL005; `WITH` раскрывается **только** если цель резолвится в схему объекта из `--symbols-dir` (таблицы — поля, все объекты — публичные процедуры), и каждый идентификатор в блоке классифицирован. Неизвестная схема или неизвестный идентификатор → блок **не трогается**, выдаётся `warning`. Системные enum-типы NAV 2017 (`ACTION`, `DATATYPE`, `TRANSACTIONTYPE`, `TESTPERMISSIONS`, ...) добавлены в `GlobalBuiltins` и никогда не префиксируются перед `::`.
+
+**Пример 1 — неизвестная схема: WITH остаётся + warning:**
+
+```cal
+    PROCEDURE UseUnknown@1();
+    VAR
+      SomeRec@1000 : Record 99999;              // НЕ трогать: таблицы нет в --symbols-dir
+      TotalL@1001 : Decimal;
+    BEGIN
+      WITH SomeRec DO                           // НЕ раскрывать (было: слепой префикс всего подряд)
+        TotalL += Quantity;                     // Quantity НЕ получит SomeRecL.Quantity — схема неизвестна
+    END;
+```
+
+**Пример 2 — публичные процедуры индексируются; enum перед `::` не префиксируется:**
+
+```cal
+    PROCEDURE ApplyAdo@1(UseAdoP@1000 : Boolean);   // Исходный код
+    VAR
+      ItemLedgEntryL@1001 : Record 32;              // схема t32 из --symbols-dir (поля + SetUseADO)
+    BEGIN
+      WITH ItemLedgEntryL DO
+        SetUseADO(UseAdoP);                         // НАРУШЕНИЕ: публичная процедура таблицы -> префикс нужен
+    END;
+```
+
+```cal
+    PROCEDURE ApplyAdo@1(UseAdoP@1000 : Boolean);   // Исправленный код
+    VAR
+      ItemLedgEntryL@1001 : Record 32;
+    BEGIN
+      ItemLedgEntryL.SetUseADO(UseAdoP);            // Исправлено: () раскрыт, SetUseADO префиксован из схемы (п.3)
+    END;
+```
+
+```cal
+      // enum-гард (п.2): в теле WITH ...
+      IF FORM.RUNMODAL(0, ItemLedgEntryL) = ACTION::LookupOK THEN
+        TotalQtyL := Quantity;                      // ACTION — НЕ трогать (enum), Quantity — поле, префикс нужен
+      // результат: IF FORM.RUNMODAL(...) = ACTION::LookupOK THEN TotalQtyL := ItemLedgEntryL.Quantity;
+```
+
+**Пример 3 — CLI-гейт (п.1):**
+
+```
+prereviewcal fix c50005 - No With.txt            // error: --symbols-dir is required when rule CAL005 (no-with) is enabled (exit 2)
+prereviewcal fix --symbols-dir <dir> c50005 ...  // ОК; при "CAL005": {"enabled": false} флаг не требуется
+```
+
+**Тест:** [TestWithUnknownSchemaNotExpanded](internal/rules/with_strict_test.go#L35), [TestWithKnownSchemaUnknownIdentifier](internal/rules/with_strict_test.go#L67), [TestWithSchemaProcedureQualified](internal/rules/with_strict_test.go#L100), [TestWithEnumScopeNotPrefixed](internal/rules/with_strict_test.go#L120), [TestWithNestedInnerBlocked](internal/rules/with_strict_test.go#L149), [TestWorkspaceIndexObjectProcedures](internal/objectfile/symbols_dir_test.go#L13), [TestSystemEnumTypesAreGlobalBuiltins](internal/cal/enums_builtins_test.go#L7), [TestCLIFixCheckAndDiff](internal/cli/cli_test.go#L11) (шаги 0 и 5), [input](testdata/cases/cal005_no_with/input/c50005%20-%20No%20With.txt) / [expected](testdata/cases/cal005_no_with/expected/c50005%20-%20No%20With.txt)
 
 <a id="cal010"></a>
 ### CAL010 — суффикс `L` у локальных переменных
