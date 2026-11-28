@@ -46,10 +46,10 @@ type schemaKey struct {
 // directory using FileNamingConfig: tables provide field schemas, all objects
 // provide their public procedure lists (task 1.3).
 type WorkspaceIndex struct {
-	naming  config.FileNamingConfig
-	byKey   map[schemaKey]*TableSchema
-	byPath  map[schemaKey]string
-	loaded  map[schemaKey]bool
+	naming config.FileNamingConfig
+	byKey  map[schemaKey]*TableSchema
+	byPath map[schemaKey]string
+	loaded map[schemaKey]bool
 }
 
 // NewWorkspaceIndex scans dir recursively for object .txt files matching the
@@ -170,4 +170,3 @@ func (idx *WorkspaceIndex) LookupObject(objectType string, id int) *TableSchema 
 	idx.RegisterObject(obj)
 	return idx.byKey[key]
 }
-

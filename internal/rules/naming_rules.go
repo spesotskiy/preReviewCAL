@@ -88,11 +88,17 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 				msgSkip("the name is shadowed by a procedure or a local/parameter declaration")
 				continue
 			}
+			if obj.ExternalRefs[lowerOld] {
+				msgSkip("the name is referenced from non-code sections (SourceExpr, controls, elements)")
+				continue
+			}
 			if len([]rune(newName)) > navMaxIdentLen {
 				msgSkip(fmt.Sprintf("'%s' exceeds NAV 30-char limit", newName))
 				continue
 			}
-			collides := shadowed[lowerNew] || osym.dataItems[lowerNew] > 0
+			_, isNewOwnField := osym.ownFields[lowerNew]
+			_, isNewDataItem := osym.dataItems[lowerNew]
+			collides := shadowed[lowerNew] || isNewOwnField || isNewDataItem
 			if _, isProc := osym.procs[lowerNew]; isProc {
 				collides = true
 			}
@@ -175,19 +181,20 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 					end:     lv.NameEnd,
 					newText: cal.FormatIdent(newName, lv.IsQuoted),
 				})
-				diags = append(diags, Diagnostic{
-					Rule:     config.RuleLocalVarSuffix,
-					Severity: SeverityInfo,
-					Line:     lineNum,
-					Message:  fmt.Sprintf("renamed local variable '%s' to '%s'", lv.Name, newName),
-					Fixed:    true,
-				})
 				if conflictsGlobalBuiltin(lv.Name) {
 					diags = append(diags, Diagnostic{
 						Rule:     config.RuleLocalVarSuffix,
 						Severity: SeverityWarning,
 						Line:     lineNum,
-						Message:  fmt.Sprintf("local variable '%s' collided with system function '%s'; renamed to '%s'", lv.Name, strings.ToUpper(lv.Name), newName),
+						Message:  fmt.Sprintf("renamed local variable '%s' to '%s': name collided with system function '%s'", lv.Name, newName, strings.ToUpper(lv.Name)),
+						Fixed:    true,
+					})
+				} else {
+					diags = append(diags, Diagnostic{
+						Rule:     config.RuleLocalVarSuffix,
+						Severity: SeverityInfo,
+						Line:     lineNum,
+						Message:  fmt.Sprintf("renamed local variable '%s' to '%s'", lv.Name, newName),
 						Fixed:    true,
 					})
 				}
@@ -286,19 +293,20 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 							end:     param.NameEnd,
 							newText: cal.FormatIdent(newName, param.IsQuoted),
 						})
-						diags = append(diags, Diagnostic{
-							Rule:     config.RuleParamSuffix,
-							Severity: SeverityInfo,
-							Line:     lineNum,
-							Message:  fmt.Sprintf("renamed parameter '%s' to '%s'", param.Name, newName),
-							Fixed:    true,
-						})
 						if conflictsGlobalBuiltin(param.Name) {
 							diags = append(diags, Diagnostic{
 								Rule:     config.RuleParamSuffix,
 								Severity: SeverityWarning,
 								Line:     lineNum,
-								Message:  fmt.Sprintf("parameter '%s' collided with system function '%s'; renamed to '%s'", param.Name, strings.ToUpper(param.Name), newName),
+								Message:  fmt.Sprintf("renamed parameter '%s' to '%s': name collided with system function '%s'", param.Name, newName, strings.ToUpper(param.Name)),
+								Fixed:    true,
+							})
+						} else {
+							diags = append(diags, Diagnostic{
+								Rule:     config.RuleParamSuffix,
+								Severity: SeverityInfo,
+								Line:     lineNum,
+								Message:  fmt.Sprintf("renamed parameter '%s' to '%s'", param.Name, newName),
 								Fixed:    true,
 							})
 						}
@@ -344,22 +352,23 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 					renames[strings.ToLower(lv.Name)] = newName
 					codeEdits = append(codeEdits, textEdit{
 						start:   lv.NameStart,
-						end:   lv.NameEnd,
+						end:     lv.NameEnd,
 						newText: cal.FormatIdent(newName, lv.IsQuoted),
-					})
-					diags = append(diags, Diagnostic{
-						Rule:     config.RuleLocalVarSuffix,
-						Severity: SeverityInfo,
-						Line:     lineNum,
-						Message:  fmt.Sprintf("renamed local variable '%s' to '%s'", lv.Name, newName),
-						Fixed:    true,
 					})
 					if conflictsGlobalBuiltin(lv.Name) {
 						diags = append(diags, Diagnostic{
 							Rule:     config.RuleLocalVarSuffix,
 							Severity: SeverityWarning,
 							Line:     lineNum,
-							Message:  fmt.Sprintf("local variable '%s' collided with system function '%s'; renamed to '%s'", lv.Name, strings.ToUpper(lv.Name), newName),
+							Message:  fmt.Sprintf("renamed local variable '%s' to '%s': name collided with system function '%s'", lv.Name, newName, strings.ToUpper(lv.Name)),
+							Fixed:    true,
+						})
+					} else {
+						diags = append(diags, Diagnostic{
+							Rule:     config.RuleLocalVarSuffix,
+							Severity: SeverityInfo,
+							Line:     lineNum,
+							Message:  fmt.Sprintf("renamed local variable '%s' to '%s'", lv.Name, newName),
 							Fixed:    true,
 						})
 					}
@@ -367,13 +376,18 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 			}
 
 			// Task 1.5: Return Value colliding with a system function gets the local
-			// suffix (Return Values normally carry no suffix).
-			if enableLocal && proc.ReturnVar != nil && proc.ReturnVar.NameEnd > proc.ReturnVar.NameStart &&
+			// suffix (Return Values normally carry no suffix). Only in ModeFull: in
+			// ModePartial a rename would rewrite untouched old lines of the body.
+			if enableLocal && us.Mode == diffscope.ModeFull && proc.ReturnVar != nil &&
+				proc.ReturnVar.NameEnd > proc.ReturnVar.NameStart &&
 				!proc.IsEventSubscriber() && !proc.IsEventPublisher() &&
 				conflictsGlobalBuiltin(proc.ReturnVar.Name) {
 				oldName := proc.ReturnVar.Name
 				newName := oldName + localSuffix
+				lowerNew := strings.ToLower(newName)
 				lineNum := obj.LineOfOffset(obj.Code.StartOffset + proc.ReturnVar.NameStart)
+				_, newIsOwnField := osym.ownFields[lowerNew]
+				_, newIsDataItem := osym.dataItems[lowerNew]
 				switch {
 				case len([]rune(newName)) > navMaxIdentLen:
 					diags = append(diags, Diagnostic{
@@ -383,7 +397,7 @@ func runSuffixRules(obj *objectfile.ObjectFile, cfg *config.Config, fscope *diff
 						Message:  fmt.Sprintf("Return Value '%s' collides with system function '%s', but '%s' exceeds NAV 30-char limit; not renamed", oldName, strings.ToUpper(oldName), newName),
 						Fixed:    false,
 					})
-				case occupied[strings.ToLower(newName)]:
+				case occupied[lowerNew] || newIsOwnField || newIsDataItem:
 					diags = append(diags, Diagnostic{
 						Rule:     config.RuleLocalVarSuffix,
 						Severity: SeverityWarning,
@@ -580,10 +594,23 @@ func applyIdentifierRenames(body string, renames map[string]string) string {
 			continue
 		}
 		if newName, ok := renames[strings.ToLower(tok.IdentName())]; ok {
-			// Task 1.5: an exact-UPPERCASE reference to a system builtin (e.g. WORKDATE)
-			// is a function call, not a reference to the colliding variable; never rename it.
-			if tok.Kind == cal.TokIdent && tok.Text == strings.ToUpper(tok.Text) && cal.IsGlobalBuiltin(tok.Text) {
-				continue
+			// Review fix (task 1.5): decide by syntax, not by casing alone.
+			if tok.Kind == cal.TokIdent && cal.IsGlobalBuiltin(tok.Text) {
+				next := cal.NextCode(tokens, i+1)
+				isAssignLHS := next != -1 && (tokens[next].Kind == cal.TokAssign ||
+					tokens[next].Kind == cal.TokPlusAssign || tokens[next].Kind == cal.TokMinusAssign ||
+					tokens[next].Kind == cal.TokMulAssign || tokens[next].Kind == cal.TokDivAssign)
+				if next != -1 && tokens[next].Kind == cal.TokLParen {
+					// 'TIME(...)' / 'WORKDATE(...)' -> builtin call: never rename.
+					continue
+				}
+				if !isAssignLHS && tok.Text == strings.ToUpper(tok.Text) {
+					// Bare exact-UPPERCASE builtin reference in RHS position
+					// (e.g. 'WorkDate := WORKDATE;'): keep as builtin.
+					continue
+				}
+				// LHS of ':=' / '+= / -= / *= / /=' is always a variable -> rename
+				// regardless of casing (e.g. 'TIME := DT2TIME(Value);').
 			}
 			edits = append(edits, textEdit{
 				start:   tok.Start,

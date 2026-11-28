@@ -31,9 +31,12 @@ type Diagnostic struct {
 
 func (d Diagnostic) String() string {
 	status := "warn"
-	if d.Fixed {
+	switch {
+	case d.Fixed && d.Severity == SeverityWarning:
+		status = "fixed, warn"
+	case d.Fixed:
 		status = "fixed"
-	} else if d.Severity == SeverityError {
+	case d.Severity == SeverityError:
 		status = "error"
 	}
 	return fmt.Sprintf("line %d: [%s] (%s) %s", d.Line, d.Rule, status, d.Message)
@@ -307,27 +310,24 @@ func matchOpenBack(tokens []cal.Token, closeIdx int, open, close cal.TokenKind) 
 	return -1
 }
 
-// chainRootVar resolves the leftmost receiver of the member-access chain that
-// ends at recvIdx (the token directly before a '.') and returns its declaration,
-// or nil. Call results A.B(x).C and indexers A[i].C are traversed back to A.
-func chainRootVar(tokens []cal.Token, recvIdx int, scope *localScope) *cal.VarDecl {
-	if scope == nil {
-		return nil
-	}
+// chainRootIdx returns the token index of the leftmost receiver identifier of the
+// member-access chain ending at recvIdx (traversing dots, calls and indexers back),
+// or the unchanged recvIdx / -1 when the chain cannot be resolved.
+func chainRootIdx(tokens []cal.Token, recvIdx int) int {
 	i := recvIdx
 	for i >= 0 {
 		switch tokens[i].Kind {
 		case cal.TokRParen:
 			lp := matchOpenBack(tokens, i, cal.TokLParen, cal.TokRParen)
 			if lp <= 0 {
-				return nil
+				return -1
 			}
 			i = cal.PrevCode(tokens, lp-1)
 			continue
 		case cal.TokRBracket:
 			lb := matchOpenBack(tokens, i, cal.TokLBracket, cal.TokRBracket)
 			if lb <= 0 {
-				return nil
+				return -1
 			}
 			i = cal.PrevCode(tokens, lb-1)
 			continue
@@ -338,6 +338,17 @@ func chainRootVar(tokens []cal.Token, recvIdx int, scope *localScope) *cal.VarDe
 		}
 		i = cal.PrevCode(tokens, p-1)
 	}
+	return i
+}
+
+// chainRootVar resolves the leftmost receiver of the member-access chain that
+// ends at recvIdx (the token directly before a '.') and returns its declaration,
+// or nil. Call results A.B(x).C and indexers A[i].C are traversed back to A.
+func chainRootVar(tokens []cal.Token, recvIdx int, scope *localScope) *cal.VarDecl {
+	if scope == nil {
+		return nil
+	}
+	i := chainRootIdx(tokens, recvIdx)
 	if i < 0 || i >= len(tokens) {
 		return nil
 	}
@@ -350,11 +361,11 @@ func chainRootVar(tokens []cal.Token, recvIdx int, scope *localScope) *cal.VarDe
 
 // objectSymbols caches globals, procedures, dataitems, and table fields for an ObjectFile.
 type objectSymbols struct {
-	globals    map[string]*cal.VarDecl
-	procs      map[string]*cal.ProcDecl
-	dataItems  map[string]int // lower -> tableID
-	ownFields  map[string]string
-	hasOwnRec  bool
+	globals   map[string]*cal.VarDecl
+	procs     map[string]*cal.ProcDecl
+	dataItems map[string]int // lower -> tableID
+	ownFields map[string]string
+	hasOwnRec bool
 }
 
 func buildObjectSymbols(obj *objectfile.ObjectFile, cs *cal.CodeSection) *objectSymbols {

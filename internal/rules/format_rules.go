@@ -396,12 +396,11 @@ func applyKeywordCasing(body string, changedLines map[int]bool, scope *localScop
 				continue
 			}
 		}
-		// Task 1.5: never uppercase declared variables/parameters/Return Value
-		// (e.g. local "Time" vs builtin TIME()).
-		if scope != nil {
-			if _, declared := scope.vars[strings.ToLower(tok.IdentName())]; declared {
-				continue
-			}
+		// Task 1.5 (review fix 7): never uppercase declared variables/parameters/
+		// Return Value, own-table fields, object procedures or DataItems
+		// (e.g. field "Time"/UserID on the current Table must stay as declared).
+		if scope.knownName(strings.ToLower(tok.IdentName())) {
+			continue
 		}
 		if !pascalCaseBuiltinObjects[upper] && cal.IsGlobalBuiltin(tok.Text) {
 			if (next != -1 && tokens[next].Kind == cal.TokLParen) || cal.IsZeroArgGlobalBuiltin(tok.Text) {

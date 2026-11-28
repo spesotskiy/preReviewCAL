@@ -203,7 +203,8 @@ func runGitDiffMode(cmd string, cfg *config.Config, p gitRunParams, stdout, stde
 			if !d.Fixed {
 				warningCount++
 				fmt.Fprintf(stdout, "%s: %s\n", tf.RelPath, d.String())
-			} else if p.verbose || cmd == "check" {
+			} else if d.Severity == rules.SeverityWarning || p.verbose || cmd == "check" {
+				// Fixed warnings stay visible without --verbose but do not affect the exit code.
 				fmt.Fprintf(stdout, "%s: %s\n", tf.RelPath, d.String())
 			}
 		}
@@ -271,7 +272,8 @@ func runFullFileMode(cmd string, cfg *config.Config, symbolsDir string, showDiff
 			if !d.Fixed {
 				warningCount++
 				fmt.Fprintf(stdout, "%s: %s\n", path, d.String())
-			} else if verbose {
+			} else if d.Severity == rules.SeverityWarning || verbose {
+				// Fixed warnings stay visible without --verbose but do not affect the exit code.
 				fmt.Fprintf(stdout, "%s: %s\n", path, d.String())
 			}
 		}
@@ -305,7 +307,12 @@ func runFullFileMode(cmd string, cfg *config.Config, symbolsDir string, showDiff
 
 func loadConfig(explicit string, firstTarget string) (*config.Config, error) {
 	if explicit != "" {
-		return config.Load(explicit)
+		cfg, err := config.Load(explicit)
+		if err != nil {
+			return nil, err
+		}
+		resolveSymbolsDir(cfg, filepath.Dir(explicit))
+		return cfg, nil
 	}
 	// Auto-discover .prereviewcal.json from target directory upward, then CWD.
 	searchDir := firstTarget
@@ -317,7 +324,12 @@ func loadConfig(explicit string, firstTarget string) (*config.Config, error) {
 		for {
 			candidate := filepath.Join(dir, ".prereviewcal.json")
 			if _, err := os.Stat(candidate); err == nil {
-				return config.Load(candidate)
+				cfg, err := config.Load(candidate)
+				if err != nil {
+					return nil, err
+				}
+				resolveSymbolsDir(cfg, dir)
+				return cfg, nil
 			}
 			parent := filepath.Dir(dir)
 			if parent == dir {
@@ -327,9 +339,25 @@ func loadConfig(explicit string, firstTarget string) (*config.Config, error) {
 		}
 	}
 	if _, err := os.Stat(".prereviewcal.json"); err == nil {
-		return config.Load(".prereviewcal.json")
+		cfg, err := config.Load(".prereviewcal.json")
+		if err != nil {
+			return nil, err
+		}
+		resolveSymbolsDir(cfg, ".")
+		return cfg, nil
 	}
 	return config.Default(), nil
+}
+
+// resolveSymbolsDir makes a relative "symbolsDir" config value absolute against
+// the directory of the config file that defined it (review fix item 6).
+func resolveSymbolsDir(cfg *config.Config, baseDir string) {
+	if cfg == nil || cfg.SymbolsDir == "" || filepath.IsAbs(cfg.SymbolsDir) {
+		return
+	}
+	if abs, err := filepath.Abs(filepath.Join(baseDir, cfg.SymbolsDir)); err == nil {
+		cfg.SymbolsDir = abs
+	}
 }
 
 func collectTxtFiles(targets []string) ([]string, error) {
@@ -366,4 +394,3 @@ func collectTxtFiles(targets []string) ([]string, error) {
 	}
 	return files, nil
 }
-

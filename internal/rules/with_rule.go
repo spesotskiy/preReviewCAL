@@ -82,12 +82,37 @@ func runNoWithRule(obj *objectfile.ObjectFile, cfg *config.Config, ws *objectfil
 
 type localScope struct {
 	vars map[string]*cal.VarDecl
+	// reserved: object procedures, DataItems and own-table field names (lowercased).
+	// CAL033 must never UPPERCASE these either (review fix item 7).
+	reserved map[string]bool
+}
+
+// knownName reports whether the lowercased identifier is a declared variable,
+// object procedure, DataItem or own-table field (never a builtin reference).
+func (s *localScope) knownName(lower string) bool {
+	if s == nil {
+		return false
+	}
+	if _, ok := s.vars[lower]; ok {
+		return true
+	}
+	return s.reserved[lower]
 }
 
 func buildLocalScope(params []*cal.VarDecl, retVar *cal.VarDecl, localVars *cal.VarSection, osym *objectSymbols) *localScope {
-	s := &localScope{vars: make(map[string]*cal.VarDecl)}
+	s := &localScope{vars: make(map[string]*cal.VarDecl), reserved: make(map[string]bool)}
 	for k, v := range osym.globals {
 		s.vars[k] = v
+		s.reserved[k] = true
+	}
+	for k := range osym.procs {
+		s.reserved[k] = true
+	}
+	for k := range osym.dataItems {
+		s.reserved[k] = true
+	}
+	for k := range osym.ownFields {
+		s.reserved[k] = true
 	}
 	for _, p := range params {
 		s.vars[strings.ToLower(p.Name)] = p
@@ -303,8 +328,8 @@ func resolveWithSchema(recExpr string, scope *localScope, osym *objectSymbols, o
 		return nil
 	}
 	if vd, ok := scope.vars[recKey]; ok && vd.SubtypeID > 0 {
-		switch vd.BaseType {
-		case "Codeunit", "Page", "Report", "Query", "XMLport", "Port":
+		switch strings.ToLower(vd.BaseType) {
+		case "codeunit", "page", "report", "query", "xmlport", "port":
 			if ws != nil {
 				return ws.LookupObject(vd.BaseType, vd.SubtypeID)
 			}
@@ -491,6 +516,7 @@ func prefixWithIdentifiers(fragment string, recExpr string, scope *localScope, o
 	tokens := cal.Lex(fragment)
 	var edits []textEdit
 	var unknowns []string
+	unknownSeen := make(map[string]bool)
 	var callStack []callArgFrame
 
 	for i, tok := range tokens {
@@ -547,38 +573,53 @@ func prefixWithIdentifiers(fragment string, recExpr string, scope *localScope, o
 			continue
 		}
 
-		// Never prefix an enum qualifier: ACTION::LookupOK, DATATYPE::Text, ... (task 1.3).
-		if next := cal.NextCode(tokens, i+1); next != -1 && tokens[next].Kind == cal.TokScope {
+		// Table fields from the resolved schema are ALWAYS prefixed — including
+		// Option fields before '::' ("Document Type"::Order -> X."Document Type"::Order).
+		// System enum qualifiers (ACTION::LookupOK) are not schema fields and are
+		// protected below (task 1.3 + review fix).
+		isSchemaField := tableSchema != nil && tableSchema.HasField(name)
+
+		// Never prefix an enum qualifier that is not a target field.
+		if next := cal.NextCode(tokens, i+1); next != -1 && tokens[next].Kind == cal.TokScope && !isSchemaField {
 			continue
 		}
 
 		shouldPrefix := false
 
-		// 1. Known table field from the resolved schema is ALWAYS prefixed.
-		if tableSchema != nil && tableSchema.HasField(name) {
+		// Record methods only make sense for a Record (Table) target; other objects
+		// expose their own zero-arg methods instead.
+		isTableTarget := tableSchema == nil || strings.EqualFold(tableSchema.ObjectType, "Table")
+		_, shadowedByVar := scope.vars[lower]
+
+		if isSchemaField {
 			shouldPrefix = true
-		} else if cal.IsRecordMethod(name) {
-			// 2. Built-in Record method (SETRANGE, FINDSET, MODIFY, VALIDATE, TESTFIELD, INIT, INSERT, etc.).
-			// Check it isn't shadowed by a local/global variable of the same name.
-			if _, isVar := scope.vars[lower]; !isVar {
-				shouldPrefix = true
-			}
+		} else if isTableTarget && cal.IsRecordMethod(name) && !shadowedByVar {
+			// Built-in Record method (SETRANGE, FINDSET, MODIFY, VALIDATE, TESTFIELD, INIT, INSERT, etc.)
+			// not shadowed by a local/global variable of the same name.
+			shouldPrefix = true
+		} else if !isTableTarget && cal.IsObjectZeroArgMethod(name) && !shadowedByVar {
+			// Zero-arg method of Page/Report/Codeunit/XMLport/File/Dialog objects.
+			shouldPrefix = true
 		} else {
-			// 3. Known variable, own-object procedure, DataItem or global builtin: never prefix.
+			// Known variable, own-object procedure, own-table field, DataItem or global builtin: never prefix.
 			_, isVar := scope.vars[lower]
 			_, isProc := osym.procs[lower]
 			_, isDataItem := osym.dataItems[lower]
+			_, isOwnField := osym.ownFields[lower]
 			isBuiltin := cal.IsGlobalBuiltin(name)
 
 			switch {
-			case isVar || isProc || isDataItem || isBuiltin:
-				// leave unqualified
+			case isVar || isProc || isDataItem || isOwnField || isBuiltin:
+				// leave unqualified (own fields stay accessible via the implicit Rec)
 			case tableSchema != nil && tableSchema.HasProc(name):
-				// 4. Public procedure of the WITH target object (task 1.3): prefix it.
+				// Public procedure of the WITH target object (task 1.3): prefix it.
 				shouldPrefix = true
 			default:
-				// 5. Unresolvable name -> strict mode: refuse elimination for this block.
-				unknowns = append(unknowns, name)
+				// Unresolvable name -> strict mode: refuse elimination for this block (deduplicated).
+				if !unknownSeen[lower] {
+					unknownSeen[lower] = true
+					unknowns = append(unknowns, name)
+				}
 			}
 		}
 

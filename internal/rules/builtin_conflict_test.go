@@ -12,8 +12,8 @@ import (
 
 func conflictScope() *localScope {
 	return &localScope{vars: map[string]*cal.VarDecl{
-		"time":      {Name: "Time", BaseType: "Time"},
-		"counter":   {Name: "Counter", BaseType: "Integer"},
+		"time":       {Name: "Time", BaseType: "Time"},
+		"counter":    {Name: "Counter", BaseType: "Integer"},
 		"strsubstno": {Name: "StrSubstNo", BaseType: "Text"},
 	}}
 }

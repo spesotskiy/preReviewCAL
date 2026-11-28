@@ -207,6 +207,20 @@ prereviewcal fix --symbols-dir <dir> c50005 ...  // ОК; при "CAL005": {"ena
 
 **Тест:** [TestWithUnknownSchemaNotExpanded](internal/rules/with_strict_test.go#L35), [TestWithKnownSchemaUnknownIdentifier](internal/rules/with_strict_test.go#L67), [TestWithSchemaProcedureQualified](internal/rules/with_strict_test.go#L100), [TestWithEnumScopeNotPrefixed](internal/rules/with_strict_test.go#L120), [TestWithNestedInnerBlocked](internal/rules/with_strict_test.go#L149), [TestWorkspaceIndexObjectProcedures](internal/objectfile/symbols_dir_test.go#L13), [TestSystemEnumTypesAreGlobalBuiltins](internal/cal/enums_builtins_test.go#L7), [TestCLIFixCheckAndDiff](internal/cli/cli_test.go#L11) (шаги 0 и 5), [input](testdata/cases/cal005_no_with/input/c50005%20-%20No%20With.txt) / [expected](testdata/cases/cal005_no_with/expected/c50005%20-%20No%20With.txt)
 
+#### Ревью-фиксы CAL005
+
+- **Option-поля цели `WITH` префиксируются и перед `::`** (гард enum-квалификатора пропускает только не-поля схемы):
+
+```cal
+        IF "Entry Type" = "Entry Type"::Sale THEN   // Исходный код (в WITH ItemLedgEntryL)
+        IF ItemLedgEntryL."Entry Type" = ItemLedgEntryL."Entry Type"::Sale THEN  // Исправлено
+```
+
+- Собственные поля текущего объекта (`osym.ownFields`) внутри тела `WITH` не блокируют раскрытие и остаются без префикса; для не-Table целей (Codeunit/Page/...) методы Record не префиксируются; неизвестные идентификаторы в warning дедуплицируются; `switch` по типу цели — регистронезависимый.
+- Относительный `symbolsDir` в `.prereviewcal.json` резолвится от папки конфига, а не от CWD.
+
+**Тест:** [TestWithOptionFieldBeforeScopeIsPrefixed](internal/rules/review_fixes_test.go#L15), [TestWithOwnFieldsDoNotBlock](internal/rules/review_fixes_test.go#L173), [TestWithNonTableSchemaAndUnknownDedup](internal/rules/review_fixes_test.go#L224), [TestCLIRelativeConfigSymbolsDir](internal/cli/cli_test.go#L176)
+
 <a id="cal010"></a>
 ### CAL010 — суффикс `L` у локальных переменных
 
@@ -329,6 +343,16 @@ prereviewcal fix --symbols-dir <dir> c50005 ...  // ОК; при "CAL005": {"ena
 Case с тенью: глобальная `WorkDate` **не** переименовывается (только warning), если локальная/параметр с тем же именем перекрывает её в какой-либо процедуре.
 
 **Тест:** [TestKeywordCasingDeclaredNameGuard](internal/rules/builtin_conflict_test.go#L23), [TestReturnVarBuiltinConflictRename](internal/rules/builtin_conflict_test.go#L99), [TestGlobalBuiltinConflictRename](internal/rules/builtin_conflict_test.go#L143), [TestGlobalBuiltinConflictShadowedWarnsOnly](internal/rules/builtin_conflict_test.go#L199), [TestReturnVarBuiltinConflictCollisionWarnsOnly](internal/rules/builtin_conflict_test.go#L250), golden: [input](testdata/cases/builtin_name_conflict/input/c50024%20-%20Builtin%20Name%20Conflict.txt) / [expected](testdata/cases/builtin_name_conflict/expected/c50024%20-%20Builtin%20Name%20Conflict.txt)
+
+#### Ревью-фиксы конфликта с системными функциями
+
+- **Синтаксис вместо регистра** при переименовании ссылок: левая часть `:=`/`+=`/`-=`/`*=`/`/=` переименоывается **всегда**, даже в UPPERCASE (`TIME := DT2TIME(Value)` → `TimeL := ...`); ссылка вида `NAME(` — вызов builtin, не переименовывается; точная UPPERCASE-ссылка на 0-арг builtin без `()` пропускается только в RHS-позиции (`WorkDate := WORKDATE;`).
+- Переименование глобальной переменной блокируется (`warning`), если имя встречается в **не-CoDE** секциях (`obj.ExternalRefs`: SourceExpr/Visible/DATASET/ELEMENTS), а также проверяются коллизии с полями таблицы (`ownFields`) и `dataItems` по ключу; переименование Return Value выполняется только в `ModeFull` (в diff-режиме `ModePartial` нетронутые строки не переписываются).
+- CAL033 дополнительно защищает собственные поля таблицы, процедуры объекта и DataItems (`localScope.reserved`) — поле `Time` на Table больше не превратится в `TIME`.
+- Коллизия builtin у локальной переменной/параметра даёт **одну** `warning`-диагностику (вместо info+warning); фиксированные warning-диагностики печатаются в CLI без `--verbose` с тегом `(fixed, warn)` и не влияют на exit code `check` (`HasWarnings()` считает только нефиксированные).
+- UTF-8-хвосты в CAL021 читаются через `utf8.DecodeLastRuneInString`; CAL020 резолвит тип получателя по корню цепочки (`chainRootIdx`) — `Arr[1].DoSomething` для `ARRAY [..] OF Codeunit` теперь корректно получает `()`.
+
+**Тест:** [TestRenameUppercaseAssignmentLHS](internal/rules/review_fixes_test.go#L52), [TestGlobalRenameBlockedByExternalRefs](internal/rules/review_fixes_test.go#L100), [TestDiagnosticStringFixedWarning](internal/rules/review_fixes_test.go#L152), [TestKeywordCasingOwnFieldGuard](internal/rules/review_fixes_test.go#L255), [TestCLIFixedWarningVisible](internal/cli/cli_test.go#L146), [TestCallParensDotNetGuard](internal/rules/dotnet_guard_test.go#L83), [TestFixRedundantParensNoTokenGluing](internal/rules/parens_rules_test.go#L34)
 
 ---
 
@@ -594,7 +618,7 @@ Case с тенью: глобальная `WorkDate` **не** переимено�
 **Тест:** [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt), [TestGoldenCases](internal/rules/rules_test.go#L24)
 
 <a id="cal031-multi"></a>
-### CAL031 — многострочный `IF`: `THEN` под `IF`, `BEGIN` отдельной строкой
+### CAL031 — многострочный `IF`: `BEGIN` отдельной строкой
 
 **Исходный код:**
 
@@ -609,11 +633,13 @@ Case с тенью: глобальная `WorkDate` **не** переимено�
 
 ```cal
       IF (QtyP > 0) AND                  // продолжение условия выровнено под первым выражением
-         (PriceP > 0) THEN               // THEN на отдельной строке под IF
-      BEGIN                              // Исправлено: BEGIN отдельной строкой под THEN
+         (PriceP > 0) THEN               // THEN остаётся на последней строке условия
+      BEGIN                              // Исправлено: BEGIN отдельной строкой под IF
         TotalL := TotalL + PriceP;
       END;
 ```
+
+(вынос `THEN` на отдельную строку ровно под `IF` — план Этапа 3, пункт 3.1 TASKS.md)
 
 **Тест:** [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt), [TestGoldenCases](internal/rules/rules_test.go#L24)
 

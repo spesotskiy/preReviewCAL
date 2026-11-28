@@ -161,9 +161,16 @@ func fixCallParensInBody(body string, scope *localScope, osym *objectSymbols, ch
 			}
 			var recvVar *cal.VarDecl
 			recvName := ""
-			if recvIdx != -1 && (tokens[recvIdx].Kind == cal.TokIdent || tokens[recvIdx].Kind == cal.TokQuotedIdent) {
-				recvName = tokens[recvIdx].IdentName()
-				recvVar = scope.vars[strings.ToLower(recvName)]
+			// Resolve the chain root (Arr[1].Method, A.B(x).Method, Rec.F.G) so the head
+			// variable's declared type/name is found for arrays/chains too (review fix item 9).
+			if rootIdx := chainRootIdx(tokens, recvIdx); rootIdx >= 0 && rootIdx < len(tokens) {
+				rt := tokens[rootIdx]
+				if rt.Kind == cal.TokIdent || rt.Kind == cal.TokQuotedIdent {
+					recvName = rt.IdentName()
+					if scope != nil {
+						recvVar = scope.vars[strings.ToLower(recvName)]
+					}
+				}
 			}
 
 			if cal.IsRecordZeroArgMethod(name) || cal.IsObjectZeroArgMethod(name) {
@@ -376,11 +383,7 @@ func identPartRuneBefore(s string, idx int) bool {
 	if idx <= 0 {
 		return false
 	}
-	i := idx - 1
-	for i > 0 && s[i]&0xC0 == 0x80 {
-		i--
-	}
-	r, _ := utf8.DecodeRuneInString(s[i:idx])
+	r, _ := utf8.DecodeLastRuneInString(s[:idx])
 	return cal.IsIdentPartRune(r)
 }
 
