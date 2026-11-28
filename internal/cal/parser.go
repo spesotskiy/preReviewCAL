@@ -73,6 +73,19 @@ func (p *ProcDecl) HasAttribute(name string) bool {
 	return false
 }
 
+// IsEventSubscriber reports whether the procedure is an event subscriber.
+func (p *ProcDecl) IsEventSubscriber() bool {
+	return p.HasAttribute("EventSubscriber")
+}
+
+// IsEventPublisher reports whether the procedure publishes events.
+// NAV 2017 uses [Integration] / [Integration(...)] and [Business] / [Business(...)],
+// AL uses [IntegrationEvent] and [BusinessEvent] (task 1.4). Case-insensitive.
+func (p *ProcDecl) IsEventPublisher() bool {
+	return p.HasAttribute("Integration") || p.HasAttribute("Business") ||
+		p.HasAttribute("IntegrationEvent") || p.HasAttribute("BusinessEvent")
+}
+
 // CodeSection is the parsed structure of a NAV object's CODE section body.
 type CodeSection struct {
 	Raw        string

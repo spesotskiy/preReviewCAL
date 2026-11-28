@@ -1,0 +1,51 @@
+OBJECT Codeunit 50023 NAV2017 Events
+{
+  OBJECT-PROPERTIES
+  {
+    Date=28.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    [Integration]
+    LOCAL PROCEDURE OnAfterCalcDiscount@10(DiscountGroup@1000 : Code[20];DiscValue@1001 : Decimal);
+    BEGIN
+    END;
+
+    [integration()]
+    LOCAL PROCEDURE OnBeforeScoped@11(ScopeKey@1000 : Text[50]);
+    BEGIN
+    END;
+
+    [Business]
+    LOCAL PROCEDURE OnBigSale@12(CustomerName@1000 : Text[100];HiddenNote@1001 : Text[100]);
+    BEGIN
+    END;
+
+    [Business(Scope='Instance', IntegrationKey='SaleKey')]
+    LOCAL PROCEDURE OnScopedSale@13(BizData@1000 : Record 36);
+    BEGIN
+    END;
+
+    [EventSubscriber(Codeunit,50023,OnAfterCalcDiscount)]
+    LOCAL PROCEDURE HandleDiscount@14(UsedDocNo@1000 : Code[20];UnusedSub@1001 : Integer);
+    BEGIN
+      MESSAGE('%1', UsedDocNo);
+    END;
+
+    PROCEDURE RegularProc@1(AmountP@1000 : Decimal);
+    VAR
+      TotalL@1001 : Decimal;
+    BEGIN
+      TotalL := AmountP;
+    END;
+
+    BEGIN
+    END.
+  }
+}
