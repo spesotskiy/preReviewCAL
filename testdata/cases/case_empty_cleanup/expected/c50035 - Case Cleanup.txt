@@ -1,0 +1,40 @@
+OBJECT Codeunit 50035 Case Cleanup
+{
+  OBJECT-PROPERTIES
+  {
+    Date=28.11.26;
+    Time=12:00:00;
+    Modified=Yes;
+    Version List=TEST;
+  }
+  PROPERTIES
+  {
+  }
+  CODE
+  {
+    PROCEDURE Process@1(DocTypeP@1000 : Integer);
+    VAR
+      TotalL@1001 : Integer;
+      SalesHeaderL@1002 : Record 36;
+    BEGIN
+      // Task 6.1: empty ELSE and empty arm must be removed
+      CASE DocTypeP OF
+        2:
+          BEGIN
+            TotalL := TotalL + 1;
+          END;
+      END;
+
+      // 6.1: fully empty CASE must be removed
+
+      // 6.1: selector with a call - CASE stays, warning issued
+      CASE SalesHeaderL.IsProcessed() OF
+        TRUE:;
+      END;
+      MESSAGE('%1', TotalL);
+    END;
+
+    BEGIN
+    END.
+  }
+}

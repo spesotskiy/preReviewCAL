@@ -254,6 +254,16 @@ func formatCodeBody(body string, baseIndent int, firstLineNoIndent bool, cfg *co
 		return us.ChangedBodyLines(text)
 	}
 
+	// 0. Task 6.1 (under CAL034): remove empty CASE arms/ELSE sections and fully
+	// empty CASE ... END; constructs BEFORE the formatting passes.
+	if cfg.IsRuleEnabled(config.RuleBlankLinesAndSemicols) {
+		next, d := applyCaseCleanup(cur, getChanged(cur), obj, fileBaseOffset)
+		diags = append(diags, d...)
+		if next != cur {
+			cur = next
+		}
+	}
+
 	// 1. CAL033: Keyword casing (UPPERCASE).
 	if cfg.IsRuleEnabled(config.RuleKeywordCasing) {
 		next, changed := applyKeywordCasing(cur, getChanged(cur), scope)

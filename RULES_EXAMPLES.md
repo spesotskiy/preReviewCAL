@@ -26,6 +26,7 @@
 | [CAL032](#cal032) | Пробелы вокруг операторов, запятых, скобок вызова | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt) |
 | [CAL033](#cal033) | Ключевые слова и встроенные функции в UPPERCASE | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt) |
 | [CAL034](#cal034) | Убирает двойные `;;` и лишние пустые строки | [TestGoldenCases#L24](internal/rules/rules_test.go#L24), [input](testdata/cases/cal030_034_formatting/input/c50030%20-%20Formatting%20Guidelines.txt) / [expected](testdata/cases/cal030_034_formatting/expected/c50030%20-%20Formatting%20Guidelines.txt) |
+| [Пункт 6.1](#task-6-1-case-cleanup) | Очистка пустых `ELSE;`, пустых веток и пустого `CASE ... END;` (диагностики под CAL034) | [TestCaseCleanupEndToEnd#L267](internal/rules/case_cleanup_test.go#L267), [input](testdata/cases/case_empty_cleanup/input/c50035%20-%20Case%20Cleanup.txt) / [expected](testdata/cases/case_empty_cleanup/expected/c50035%20-%20Case%20Cleanup.txt) |
 
 ---
 
@@ -718,7 +719,60 @@ Case с тенью: глобальная `WorkDate` **не** переимено�
 
 ---
 
-## 4. Комбинированные и режимные тесты
+## 4. Очистка пустых конструкций (пункт 6.1)
+
+<a id="task-6-1-case-cleanup"></a>
+### Пункт 6.1 — очистка пустых веток и пустого `CASE` (диагностики под CAL034)
+
+Отдельный проход `applyCaseCleanup` выполняется в `formatCodeBody` **до** остальных форматирований:
+1. пустая секция `ELSE;` (и `ELSE` без тела перед `END`) внутри `CASE` удаляется;
+2. ветки `CASE` с пустым телом (`1: ;`, `"Status"::New: ;`) удаляются, только если в `CASE` **нет содержательного `ELSE`** (пустой `ELSE;` считается удалённым);
+3. если после удаления в `CASE ... END;` не осталось исполняемого кода — конструкция удаляется целиком; если селектор содержит вызов (`CASE Fn() OF`, `CASE Rec.IsProcessed() OF`) — блок **не трогается**, выдаётся `warning` о побочных эффектах.
+
+Комментарии между `:` и `;` делают ветку «непустой»; хвостовой комментарий на строке удалённой ветки сохраняется; в diff-режиме (`ModePartial`) удаляются только ветки/блоки полностью на изменённых строках; вложенные пустые `CASE` схлопываются каскадом.
+
+**Исходный код:**
+
+```cal
+      CASE DocTypeP OF
+        1: ;                                   // НАРУШЕНИЕ: пустая ветка (ELSE ниже пустой -> после его удаления ветки чистятся)
+        2:
+          BEGIN
+            TotalL := TotalL + 1;
+          END;                                 // НЕ трогать: ветка с кодом
+      ELSE;                                    // НАРУШЕНИЕ: пустая ELSE; секция
+      END;
+
+      CASE 1 OF
+      END;                                     // НАРУШЕНИЕ: полностью пустой CASE -> удалить целиком
+
+      CASE SalesHeaderL.IsProcessed() OF       // НЕ трогать: в селекторе вызов -> только warning
+        TRUE: ;
+      END;
+```
+
+**Исправленный код:**
+
+```cal
+      CASE DocTypeP OF
+        2:
+          BEGIN
+            TotalL := TotalL + 1;
+          END;
+      END;                                     // Исправлено: пустые ветка и ELSE; удалены
+
+      // Исправлено: CASE 1 OF END; удалён целиком
+
+      CASE SalesHeaderL.IsProcessed() OF       // Без изменений + warning о возможных побочных эффектах
+        TRUE:;
+      END;
+```
+
+**Тест:** [case_cleanup_test.go](internal/rules/case_cleanup_test.go#L15) (14 unit-кейсов: [ELSE](internal/rules/case_cleanup_test.go#L15), [ELSE перед END](internal/rules/case_cleanup_test.go#L36), [ветки без ELSE](internal/rules/case_cleanup_test.go#L54), [ELSE с кодом — ветки стоят](internal/rules/case_cleanup_test.go#L76), [каскад до целого CASE](internal/rules/case_cleanup_test.go#L90), [селектор-вызов -> warning](internal/rules/case_cleanup_test.go#L130), [вложенные](internal/rules/case_cleanup_test.go#L146), [комментарии](internal/rules/case_cleanup_test.go#L162), [гейт diff-строк](internal/rules/case_cleanup_test.go#L224), [no-false-positives](internal/rules/case_cleanup_test.go#L243), [end-to-end](internal/rules/case_cleanup_test.go#L267)), golden: [input](testdata/cases/case_empty_cleanup/input/c50035%20-%20Case%20Cleanup.txt) / [expected](testdata/cases/case_empty_cleanup/expected/c50035%20-%20Case%20Cleanup.txt)
+
+---
+
+## 5. Комбинированные и режимные тесты
 
 <a id="combined-codeunit"></a>
 ### Все правила сразу (Codeunit целиком)
@@ -859,7 +913,7 @@ Case с тенью: глобальная `WorkDate` **не** переимено�
 
 ---
 
-## 5. Инфраструктура (не правила)
+## 6. Инфраструктура (не правила)
 
 | Аспект | Что проверяется | Тест |
 |---|---|---|
